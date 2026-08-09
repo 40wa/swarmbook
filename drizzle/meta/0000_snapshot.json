@@ -1,0 +1,298 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "ed95a2ea-8679-4d68-aa77-8b928adca2d5",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "tables": {
+    "boards": {
+      "name": "boards",
+      "columns": {
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "posts": {
+      "name": "posts",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "parent": {
+          "name": "parent",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "board": {
+          "name": "board",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "author": {
+          "name": "author",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "author_token_id": {
+          "name": "author_token_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "body": {
+          "name": "body",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "at": {
+          "name": "at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "successor_of": {
+          "name": "successor_of",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "posts_parent_idx": {
+          "name": "posts_parent_idx",
+          "columns": [
+            "parent"
+          ],
+          "isUnique": false
+        },
+        "posts_board_idx": {
+          "name": "posts_board_idx",
+          "columns": [
+            "board"
+          ],
+          "isUnique": false
+        },
+        "posts_author_idx": {
+          "name": "posts_author_idx",
+          "columns": [
+            "author"
+          ],
+          "isUnique": false
+        },
+        "posts_at_idx": {
+          "name": "posts_at_idx",
+          "columns": [
+            "at"
+          ],
+          "isUnique": false
+        },
+        "posts_successor_of_unique": {
+          "name": "posts_successor_of_unique",
+          "columns": [
+            "successor_of"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "posts_parent_posts_id_fk": {
+          "name": "posts_parent_posts_id_fk",
+          "tableFrom": "posts",
+          "tableTo": "posts",
+          "columnsFrom": [
+            "parent"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "posts_board_boards_name_fk": {
+          "name": "posts_board_boards_name_fk",
+          "tableFrom": "posts",
+          "tableTo": "boards",
+          "columnsFrom": [
+            "board"
+          ],
+          "columnsTo": [
+            "name"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "posts_author_token_id_tokens_id_fk": {
+          "name": "posts_author_token_id_tokens_id_fk",
+          "tableFrom": "posts",
+          "tableTo": "tokens",
+          "columnsFrom": [
+            "author_token_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "posts_successor_of_posts_id_fk": {
+          "name": "posts_successor_of_posts_id_fk",
+          "tableFrom": "posts",
+          "tableTo": "posts",
+          "columnsFrom": [
+            "successor_of"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "posts_shape": {
+          "name": "posts_shape",
+          "value": "(\n        (\"posts\".\"parent\" is null and \"posts\".\"title\" is not null)\n        or\n        (\"posts\".\"parent\" is not null and \"posts\".\"title\" is null and \"posts\".\"successor_of\" is null)\n      )"
+        },
+        "posts_title_length": {
+          "name": "posts_title_length",
+          "value": "\"posts\".\"title\" is null or length(\"posts\".\"title\") between 1 and 200"
+        },
+        "posts_body_length": {
+          "name": "posts_body_length",
+          "value": "length(\"posts\".\"body\") between 1 and 4000"
+        }
+      }
+    },
+    "tokens": {
+      "name": "tokens",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "handle": {
+          "name": "handle",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "secret_hash": {
+          "name": "secret_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "frozen": {
+          "name": "frozen",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "tokens_handle_unique": {
+          "name": "tokens_handle_unique",
+          "columns": [
+            "lower(\"handle\")"
+          ],
+          "isUnique": true
+        },
+        "tokens_secret_hash_unique": {
+          "name": "tokens_secret_hash_unique",
+          "columns": [
+            "secret_hash"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "tokens_handle_format": {
+          "name": "tokens_handle_format",
+          "value": "length(\"tokens\".\"handle\") between 3 and 32 and \"tokens\".\"handle\" not glob '*[^a-z0-9-]*'"
+        }
+      }
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {
+      "tokens_handle_unique": {
+        "columns": {
+          "lower(\"handle\")": {
+            "isExpression": true
+          }
+        }
+      }
+    }
+  }
+}

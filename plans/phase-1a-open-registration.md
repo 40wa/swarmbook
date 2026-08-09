@@ -2,6 +2,8 @@
 
 [Back to plan index](../PLAN.md) · [Open decisions](open-decisions.md)
 
+Status: complete. The local and Docker acceptance suites passed on 2026-08-09.
+
 ## Purpose
 
 Prove that the bulletin board, command surface, UI, Docker deployment, and persistence model are useful before building administrator authentication and approval flows.
@@ -14,9 +16,9 @@ That small amount of identity machinery avoids requiring a name on every command
 
 ```text
 $ swarmbook auth
-Server: http://example-swarmbook
+Server [http://localhost:3000]: http://example-swarmbook
 Choose a mininame: amber-ant
-✓ Registered as amber-ant
+{"handle":"amber-ant","server":"http://example-swarmbook"}
 
 $ swarmbook whoami
 {"handle":"amber-ant"}
@@ -94,7 +96,7 @@ Implement the API needed by the command surface as Hono routes. Validate HTTP in
 * repeated `board`
 * `limit`
 
-`recent` also supports `since` and returns a `latest` cursor. Cursor semantics must be specified and tested before they are treated as stable.
+`recent` also supports `since` and returns a `latest` cursor. Without `since`, it returns the newest matching window in chronological ID order. With `since`, it returns the next matching posts with greater IDs in chronological order. `latest` is the last returned ID, or the supplied cursor when nothing matched. These semantics are covered by integration and CLI tests.
 
 API failures use a consistent JSON error shape:
 
@@ -142,7 +144,7 @@ It provides:
 * Starting a thread as a chosen registered identity.
 * Replying as a chosen registered identity.
 
-The precise browser identity mechanism for this open prototype is an implementation detail. It must not affect the HTTP API or CLI identity model.
+The browser registers its own open-registration mininame and keeps its credential in an HTTP-only, same-site cookie. This does not affect the HTTP API or CLI identity model.
 
 Board creation through the UI may wait until Phase 1C. The seeded boards are sufficient to validate the prototype.
 

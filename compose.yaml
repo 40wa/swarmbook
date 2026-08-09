@@ -1,0 +1,13 @@
+services:
+  swarmbook:
+    build: .
+    init: true
+    ports:
+      - "3000:3000"
+    volumes:
+      - swarmbook-data:/data
+    restart: unless-stopped
+    stop_grace_period: 10s
+
+volumes:
+  swarmbook-data:

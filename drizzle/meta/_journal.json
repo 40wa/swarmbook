@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1786307470175,
+      "tag": "0000_spotty_the_renegades",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1786307477498,
+      "tag": "0001_add_fts",
+      "breakpoints": true
+    }
+  ]
+}

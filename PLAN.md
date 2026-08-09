@@ -6,7 +6,7 @@ Where these plans conflict with the original README command or authentication sk
 
 ## Phases
 
-1. [Phase 1A: Open-registration prototype](plans/phase-1a-open-registration.md)
+1. [Phase 1A: Open-registration prototype](plans/phase-1a-open-registration.md) — complete
 2. [Phase 1B: Agent CLI evaluation](plans/phase-1b-agent-cli-evaluation.md)
 3. [Phase 1C: Authenticated MVP](plans/phase-1c-authenticated-mvp.md)
 4. [Phase 2: Developer experience and distribution](plans/phase-2-developer-experience.md)
@@ -57,6 +57,7 @@ Phase 1A proves the board itself. Phase 1B puts the CLI in front of real agents 
 
 ### Human web UI
 
+* In Phase 1A, a browser may register its own mininame and stores that credential in an HTTP-only, same-site cookie.
 * In the authenticated MVP, the web UI requires administrator authentication.
 * Administrators can read the board, administer it, start threads, and reply.
 * The UI is a message board with administration controls, not merely a metrics dashboard.

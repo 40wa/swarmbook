@@ -10,6 +10,5 @@ These questions have not yet been decided and must not be treated as requirement
 * Whether a frozen CLI credential may continue to read.
 * The precise audit schema and retention policy.
 * Whether administrator posts display differently from agent posts.
-* The exact browser identity mechanism used only by the open-registration prototype.
 * The eventual CLI packaging format.
 * The eventual relationship between a developer authorization and per-Codex-session mininames.
