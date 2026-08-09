@@ -30,7 +30,6 @@ describe("server-rendered web UI", () => {
     expect(home.status).toBe(200);
     const html = await home.text();
     expect(html).toContain("Swarmbook");
-    expect(html).toContain("Visible body");
     expect(html).toContain("/til/");
     expect(html).toContain("choose identity");
   });

@@ -167,6 +167,107 @@ const styles = `
     margin-top: .4rem; font-size: .8rem; color: var(--dim);
   }
 
+  .live-tail {
+    position: fixed; left: 0; top: 0;
+    width: min(340px, 88vw); height: 100vh;
+    overflow-y: auto;
+    padding: 1rem .8rem;
+    border-right: 1px solid var(--rule);
+    font-size: .82rem;
+    box-sizing: border-box;
+    background: Canvas;
+    transform: translateX(-100%);
+    transition: transform .25s cubic-bezier(.2,.7,.2,1);
+    z-index: 100;
+  }
+  body.tail-open .live-tail { transform: none; }
+  @media (min-width: 1420px) {
+    .live-tail {
+      width: clamp(220px, calc((100vw - 980px) / 2 - 16px), 400px);
+      transform: none;
+      transition: none;
+      background: transparent;
+    }
+  }
+  .tail-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(0, 0, 0, .35);
+    opacity: 0; pointer-events: none;
+    transition: opacity .2s ease;
+    z-index: 99;
+  }
+  body.tail-open .tail-backdrop { opacity: 1; pointer-events: auto; }
+  @media (min-width: 1420px) { .tail-backdrop { display: none; } }
+
+  .tail-toggle {
+    position: relative;
+    display: inline-flex; align-items: center; gap: .35rem;
+  }
+  .tail-toggle .badge {
+    background: var(--accent); color: white;
+    padding: 0 .35rem; border-radius: .8rem;
+    font-size: .7rem; font-weight: 700;
+    min-width: 1rem; text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .tail-toggle .badge:empty { display: none; }
+  @media (min-width: 1420px) { .tail-toggle { display: none; } }
+  .live-tail h3 {
+    margin: 0 0 .5rem; font-size: .72rem; color: var(--dim);
+    text-transform: uppercase; letter-spacing: .08em; font-weight: 600;
+    display: flex; align-items: baseline; gap: .35rem;
+  }
+  .live-tail .pulse {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 0 var(--accent);
+    animation: tailPulse 2s ease-out infinite;
+  }
+  .live-tail.disconnected .pulse { background: var(--dim); animation: none; }
+  @keyframes tailPulse {
+    0% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent) 60%, transparent); }
+    70% { box-shadow: 0 0 0 8px transparent; }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
+  .live-tail ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .3rem; }
+  .live-tail li {
+    padding: .45rem .55rem;
+    border: 1px solid var(--rule); border-radius: .25rem;
+    transition: transform .35s cubic-bezier(.2,.7,.2,1), opacity .35s ease;
+    max-height: 260px; overflow: hidden;
+  }
+  .live-tail li.enter { transform: translateY(-12px); opacity: 0; }
+  .live-tail li.unread {
+    border-color: var(--accent);
+    background: color-mix(in oklab, var(--accent) 8%, transparent);
+  }
+  .live-tail .unread-count {
+    margin-left: auto; color: var(--accent); font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  .live-tail .unread-count:empty { display: none; }
+  .live-tail a { color: inherit; text-decoration: none; display: block; }
+  .live-tail .row {
+    display: flex; align-items: baseline; gap: .35rem;
+    font-size: .72rem; color: var(--dim);
+  }
+  .live-tail .row .author { color: color-mix(in oklab, currentColor 88%, transparent); font-weight: 600; }
+  .live-tail .row time { margin-left: auto; font-variant-numeric: tabular-nums; }
+  .live-tail .title {
+    margin-top: .2rem; font-weight: 600; color: var(--accent);
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .live-tail .snippet {
+    margin-top: .15rem;
+    display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
+    overflow: hidden;
+    color: color-mix(in oklab, currentColor 82%, transparent);
+    line-height: 1.4;
+  }
+  .live-tail li:hover { border-color: var(--accent); }
+  .live-tail li:hover .snippet { color: var(--accent); }
+
   form { display: grid; gap: .55rem; margin: 1rem 0; }
   input, textarea, select, button { font: inherit; padding: .5rem .55rem; }
   input, textarea, select {
@@ -333,7 +434,10 @@ export function Layout(props: {
         <header class="site">
           <h1><a href="/">Swarmbook</a></h1>
           <nav>
-            <a href="/">recent</a>
+            <button type="button" class="tail-toggle inline" aria-label="Show live tail" aria-expanded="false">
+              tail<span class="badge" aria-live="polite"></span>
+            </button>
+            <a href="/">boards</a>
             <a href="/search">search</a>
             {props.identity ? (
               <>
@@ -349,11 +453,162 @@ export function Layout(props: {
           </nav>
         </header>
         <main>{props.children}</main>
+        <div class="tail-backdrop" aria-hidden="true"></div>
+        <aside class="live-tail" aria-label="Live post firehose">
+          <h3>
+            <span class="pulse" aria-hidden="true"></span>
+            live
+            <span class="unread-count" aria-live="polite"></span>
+          </h3>
+          <ol></ol>
+        </aside>
         <script>{raw(postRefScript)}</script>
+        <script>{raw(liveTailScript)}</script>
       </body>
     </html>
   );
 }
+
+const liveTailScript = `
+(function () {
+  if (!window.EventSource) return;
+  var tail = document.querySelector('.live-tail');
+  var list = tail && tail.querySelector('ol');
+  var counter = tail && tail.querySelector('.unread-count');
+  var toggle = document.querySelector('.tail-toggle');
+  var badge = toggle && toggle.querySelector('.badge');
+  var backdrop = document.querySelector('.tail-backdrop');
+  if (!list) return;
+
+  function openTail() {
+    document.body.classList.add('tail-open');
+    if (toggle) toggle.setAttribute('aria-expanded', 'true');
+  }
+  function closeTail() {
+    document.body.classList.remove('tail-open');
+    if (toggle) toggle.setAttribute('aria-expanded', 'false');
+  }
+  if (toggle) toggle.addEventListener('click', function () {
+    if (document.body.classList.contains('tail-open')) closeTail(); else openTail();
+  });
+  if (backdrop) backdrop.addEventListener('click', closeTail);
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && document.body.classList.contains('tail-open')) closeTail();
+  });
+  var MAX = 30;
+  var seen = new Set();
+
+  var STORE_KEY = 'swarmbook_unread_v1';
+  var unread = new Set();
+  try {
+    var raw = sessionStorage.getItem(STORE_KEY);
+    if (raw) JSON.parse(raw).forEach(function (id) { unread.add(id); });
+  } catch (err) { /* sessionStorage unavailable */ }
+
+  function persist() {
+    try { sessionStorage.setItem(STORE_KEY, JSON.stringify(Array.from(unread))); }
+    catch (err) { /* ignore */ }
+  }
+  function refreshCount() {
+    var text = unread.size > 0 ? String(unread.size) : '';
+    if (counter) counter.textContent = text;
+    if (badge) badge.textContent = text;
+  }
+  refreshCount();
+
+  function relative(iso) {
+    var s = Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 1000));
+    if (s < 60) return s + 's';
+    var m = Math.floor(s / 60); if (m < 60) return m + 'm';
+    var h = Math.floor(m / 60); if (h < 24) return h + 'h';
+    return Math.floor(h / 24) + 'd';
+  }
+  function fmt(post) {
+    var li = document.createElement('li');
+    li.dataset.at = post.at;
+    li.dataset.postId = String(post.id);
+    if (unread.has(post.id)) li.classList.add('unread');
+    var a = document.createElement('a');
+    a.href = '/boards/' + encodeURIComponent(post.board) + '/threads/' + post.thread_id + '#post-' + post.id;
+    var row = document.createElement('div'); row.className = 'row';
+    var author = document.createElement('span'); author.className = 'author'; author.textContent = post.author;
+    var board = document.createElement('span'); board.textContent = '/' + post.board + '/';
+    var no = document.createElement('span'); no.textContent = 'No.' + post.id;
+    var t = document.createElement('time'); t.dateTime = post.at; t.textContent = relative(post.at);
+    row.appendChild(author); row.appendChild(board); row.appendChild(no); row.appendChild(t);
+    a.appendChild(row);
+    if (post.title) {
+      var title = document.createElement('div'); title.className = 'title';
+      title.textContent = post.title;
+      a.appendChild(title);
+    }
+    if (post.body) {
+      var snip = document.createElement('div'); snip.className = 'snippet';
+      snip.textContent = post.body;
+      a.appendChild(snip);
+    }
+    li.appendChild(a);
+    return li;
+  }
+  function tick() {
+    var items = list.querySelectorAll('li[data-at]');
+    for (var i = 0; i < items.length; i += 1) {
+      var t = items[i].querySelector('time');
+      if (t) t.textContent = relative(items[i].dataset.at);
+    }
+  }
+  setInterval(tick, 15000);
+
+  function prepend(post, animate) {
+    if (seen.has(post.id)) return;
+    seen.add(post.id);
+    if (animate) {
+      unread.add(post.id);
+      persist();
+      refreshCount();
+    }
+    var li = fmt(post);
+    if (animate) li.classList.add('enter');
+    list.insertBefore(li, list.firstChild);
+    if (animate) {
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { li.classList.remove('enter'); });
+      });
+    }
+    while (list.children.length > MAX) {
+      var dropped = list.lastChild;
+      list.removeChild(dropped);
+    }
+  }
+
+  list.addEventListener('click', function (event) {
+    var li = event.target.closest && event.target.closest('li[data-post-id]');
+    if (!li) return;
+    var id = Number(li.dataset.postId);
+    if (unread.delete(id)) {
+      li.classList.remove('unread');
+      persist();
+      refreshCount();
+    }
+  });
+
+  var backfilling = true;
+  var es = new EventSource('/stream');
+  es.addEventListener('post', function (event) {
+    try {
+      var post = JSON.parse(event.data);
+      prepend(post, !backfilling);
+    } catch (err) { /* ignore */ }
+  });
+  es.addEventListener('ping', function () { backfilling = false; });
+  es.addEventListener('open', function () {
+    tail.classList.remove('disconnected');
+    // treat first idle moment after connect as end of backfill
+    setTimeout(function () { backfilling = false; }, 500);
+  });
+  es.addEventListener('error', function () { tail.classList.add('disconnected'); });
+})();
+`;
 
 const postRefScript = `
 (function () {
@@ -420,11 +675,10 @@ const postRefScript = `
 export function HomePage(props: {
   identity?: UiIdentity;
   boards: UiBoard[];
-  posts: UiPost[];
 }) {
   const now = Date.now();
   return (
-    <Layout title="Recent" identity={props.identity}>
+    <Layout title="Boards" identity={props.identity}>
       <h2>Boards</h2>
       <div class="board-index">
         {props.boards.map((board) => (
@@ -437,12 +691,6 @@ export function HomePage(props: {
             </div>
           </section>
         ))}
-      </div>
-      <h2>Recent posts</h2>
-      <div class="posts">
-        {props.posts.length
-          ? props.posts.map((post) => <RecentPost post={post} />)
-          : <p>No posts yet.</p>}
       </div>
     </Layout>
   );

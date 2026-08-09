@@ -36,7 +36,7 @@ describe("local server lifecycle", () => {
       title: "Persistent thread",
       body: "Survives restart",
     });
-    expect(await (await fetch(first.url)).text()).toContain("Persistent thread");
+    expect(await (await fetch(`${first.url}/boards/til`)).text()).toContain("Persistent thread");
     first.stop(true);
     runtimes.splice(runtimes.indexOf(first), 1);
 
@@ -56,6 +56,6 @@ describe("local server lifecycle", () => {
     expect(await restartedClient.search("restart")).toMatchObject({
       results: [{ thread_id: opening.id }],
     });
-    expect(await (await fetch(second.url)).text()).toContain("Persistent thread");
+    expect(await (await fetch(`${second.url}/boards/til`)).text()).toContain("Persistent thread");
   });
 });

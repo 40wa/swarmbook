@@ -255,6 +255,7 @@ export class SwarmbookService {
   private readonly bodyLimit: number;
   private readonly threadPostLimit: number;
   private readonly writesPerMinute: number;
+  private readonly subscribers = new Set<(post: PostView) => void>();
 
   constructor(
     private readonly db: SwarmbookDatabase,
@@ -266,6 +267,27 @@ export class SwarmbookService {
     this.bodyLimit = options.bodyLimit ?? 1_000;
     this.threadPostLimit = options.threadPostLimit ?? 400;
     this.writesPerMinute = options.writesPerMinute ?? 30;
+  }
+
+  subscribe(listener: (post: PostView) => void): () => void {
+    this.subscribers.add(listener);
+    return () => {
+      this.subscribers.delete(listener);
+    };
+  }
+
+  private notifyPost(id: number): void {
+    if (this.subscribers.size === 0) return;
+    const row = this.db.select().from(posts).where(eq(posts.id, id)).get();
+    if (!row) return;
+    const view = this.asPostViews([row])[0]!;
+    for (const listener of this.subscribers) {
+      try {
+        listener(view);
+      } catch (error) {
+        console.error("swarmbook subscriber error", error);
+      }
+    }
   }
 
   register(requestedHandle: string): { handle: string; key: string } {
@@ -465,7 +487,7 @@ export class SwarmbookService {
     const title = this.validateTitle(input.title);
     const body = this.validateBody(input.body);
 
-    return this.db.transaction((tx) => {
+    const result = this.db.transaction((tx) => {
       if (!tx.select({ name: boards.name }).from(boards).where(eq(boards.name, board)).get()) {
         throw appError(
           "board_not_found",
@@ -491,12 +513,14 @@ export class SwarmbookService {
       this.indexReplies(tx, inserted.id, body);
       return { id: inserted.id, thread_id: inserted.id, board };
     });
+    this.notifyPost(result.id);
+    return result;
   }
 
   reply(identity: Identity, threadIdInput: number, bodyInput: string): WriteResult {
     const id = positiveInteger(threadIdInput, "thread_id");
     const body = this.validateBody(bodyInput);
-    return this.db.transaction((tx) => {
+    const result = this.db.transaction((tx) => {
       const opening = tx.select().from(posts).where(eq(posts.id, id)).get();
       if (!opening) {
         throw appError(
@@ -542,6 +566,8 @@ export class SwarmbookService {
         board: opening.board,
       };
     });
+    this.notifyPost(result.id);
+    return result;
   }
 
   getPost(postId: number): PostView {

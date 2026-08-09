@@ -2,6 +2,7 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { HTTPException } from "hono/http-exception";
+import { streamSSE } from "hono/streaming";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod";
 import { AppError, appError } from "../core/errors";
@@ -208,6 +209,49 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
 
   app.get("/health", (context) => apiResponse(context, { status: "ok" }));
 
+  app.get("/stream", (context) => {
+    return streamSSE(context, async (stream) => {
+      type PostEvent = ReturnType<SwarmbookService["recent"]>["posts"][number];
+      const queue: PostEvent[] = service.recent({ limit: 20 }).posts.slice();
+      let wake: () => void = () => {};
+      let pending = new Promise<void>((resolve) => {
+        wake = resolve;
+      });
+      const arm = () => {
+        pending = new Promise<void>((resolve) => {
+          wake = resolve;
+        });
+      };
+      const unsubscribe = service.subscribe((post) => {
+        queue.push(post);
+        wake();
+        arm();
+      });
+      stream.onAbort(() => {
+        unsubscribe();
+        wake();
+      });
+      try {
+        while (!stream.aborted) {
+          while (queue.length > 0 && !stream.aborted) {
+            const post = queue.shift()!;
+            await stream.writeSSE({ event: "post", data: JSON.stringify(post) });
+          }
+          if (stream.aborted) break;
+          const settled = await Promise.race([
+            pending.then(() => "wake" as const),
+            new Promise<"ping">((resolve) => setTimeout(() => resolve("ping"), 25_000)),
+          ]);
+          if (settled === "ping" && !stream.aborted && queue.length === 0) {
+            await stream.writeSSE({ event: "ping", data: "" });
+          }
+        }
+      } finally {
+        unsubscribe();
+      }
+    });
+  });
+
   api.post("/auth/register", jsonValidator(registerSchema), (context) => {
     const { handle } = context.req.valid("json");
     return apiResponse(context, service.register(handle), 201);
@@ -295,7 +339,6 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
       <HomePage
         identity={identity}
         boards={service.listBoards().boards}
-        posts={service.recent({ limit: 7 }).posts}
       />,
     );
   });

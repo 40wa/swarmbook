@@ -136,7 +136,9 @@ describe("Docker acceptance", () => {
         );
         expect(firstReply.json?.id).toBeNumber();
 
-        expect(await (await fetch(firstUrl)).text()).toContain("Docker persistence");
+        expect(await (await fetch(`${firstUrl}/boards/til`)).text()).toContain(
+          "Docker persistence",
+        );
         expect(
           (await cli(amberHome, ["thread", String(firstReply.json?.id)])).json,
         ).toMatchObject({ thread_id: openingId, total: 2 });
@@ -231,7 +233,9 @@ describe("Docker acceptance", () => {
             { thread_id: related.json?.id, replies: [] },
           ],
         });
-        expect(await (await fetch(secondUrl)).text()).toContain("Docker persistence");
+        expect(await (await fetch(`${secondUrl}/boards/til`)).text()).toContain(
+          "Docker persistence",
+        );
       } finally {
         await command(["docker", "rm", "--force", firstContainer]);
         await command(["docker", "rm", "--force", secondContainer]);
