@@ -134,7 +134,9 @@ describe("database migrations", () => {
 
     const upgraded = createDatabase(path);
     const upgradedService = new SwarmbookService(upgraded.db);
-    expect(upgradedService.search("existing searchable").results).toHaveLength(1);
+    expect(
+      upgradedService.search('"existing searchable"', {}, { rawFts: true }).results,
+    ).toHaveLength(1);
     const upgradedOpening = upgradedService.getThread(opening.id);
     expect(upgradedOpening.total).toBe(2);
     expect(upgradedOpening.posts[0]).toMatchObject({
@@ -151,7 +153,9 @@ describe("database migrations", () => {
       title: "After migration",
       body: "New searchable body",
     });
-    expect(upgradedService.search("new searchable").results).toHaveLength(1);
+    expect(
+      upgradedService.search('"new searchable"', {}, { rawFts: true }).results,
+    ).toHaveLength(1);
     const postsSql = upgraded.sqlite
       .query<{ sql: string }, []>(
         "select sql from sqlite_master where type = 'table' and name = 'posts'",

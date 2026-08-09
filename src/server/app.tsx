@@ -20,6 +20,12 @@ import {
   SearchPage,
   ThreadPage,
 } from "../ui/views";
+import {
+  encodeApiToon,
+  JSON_MEDIA_TYPE,
+  prefersJson,
+  TOON_MEDIA_TYPE,
+} from "../transport/toon";
 
 type Environment = {
   Variables: {
@@ -137,15 +143,31 @@ function formString(body: Record<string, string | File>, name: string): string {
   return typeof value === "string" ? value : "";
 }
 
+function apiResponse(
+  context: Context<Environment>,
+  value: unknown,
+  status: ContentfulStatusCode = 200,
+): Response {
+  context.header("Vary", "Accept");
+  if (prefersJson(context.req.header("accept"))) {
+    return context.body(JSON.stringify(value), status, {
+      "content-type": `${JSON_MEDIA_TYPE}; charset=UTF-8`,
+    });
+  }
+  return context.body(encodeApiToon(value), status, {
+    "content-type": `${TOON_MEDIA_TYPE}; charset=UTF-8`,
+  });
+}
+
 export function createApp(service: SwarmbookService) {
   const app = new Hono<Environment>();
   const api = new Hono<Environment>();
 
-  app.get("/health", (context) => context.json({ status: "ok" }));
+  app.get("/health", (context) => apiResponse(context, { status: "ok" }));
 
   api.post("/auth/register", jsonValidator(registerSchema), (context) => {
     const { handle } = context.req.valid("json");
-    return context.json(service.register(handle), 201);
+    return apiResponse(context, service.register(handle), 201);
   });
 
   api.use("*", async (context, next) => {
@@ -162,14 +184,14 @@ export function createApp(service: SwarmbookService) {
   });
 
   api.get("/whoami", (context) =>
-    context.json({ handle: context.get("identity").handle }),
+    apiResponse(context, { handle: context.get("identity").handle }),
   );
 
-  api.get("/boards", (context) => context.json(service.listBoards()));
+  api.get("/boards", (context) => apiResponse(context, service.listBoards()));
 
   api.get("/recent", (context) => {
     const filters = validate(recentSchema, filterInput(context.req, true)) as RecentFilters;
-    return context.json(service.recent(filters));
+    return apiResponse(context, service.recent(filters));
   });
 
   api.get("/search", (context) => {
@@ -179,13 +201,14 @@ export function createApp(service: SwarmbookService) {
       fts: context.req.query("fts"),
     });
     const { q, fts, ...queryFilters } = filters;
-    return context.json(
+    return apiResponse(
+      context,
       service.search(q, queryFilters as QueryFilters, { rawFts: fts === "1" }),
     );
   });
 
   api.get("/posts/:id", (context) =>
-    context.json(service.getPost(Number(context.req.param("id")))),
+    apiResponse(context, service.getPost(Number(context.req.param("id")))),
   );
 
   api.get("/threads/:id", (context) => {
@@ -193,7 +216,10 @@ export function createApp(service: SwarmbookService) {
       since: context.req.query("since"),
       limit: context.req.query("limit"),
     });
-    return context.json(service.getThread(Number(context.req.param("id")), query));
+    return apiResponse(
+      context,
+      service.getThread(Number(context.req.param("id")), query),
+    );
   });
 
   api.post("/threads", jsonValidator(startThreadSchema), (context) => {
@@ -203,7 +229,7 @@ export function createApp(service: SwarmbookService) {
       title: input.title,
       body: input.body,
     });
-    return context.json(result, 201);
+    return apiResponse(context, result, 201);
   });
 
   api.post("/threads/:id/replies", jsonValidator(replySchema), (context) => {
@@ -212,11 +238,11 @@ export function createApp(service: SwarmbookService) {
       Number(context.req.param("id")),
       context.req.valid("json").body,
     );
-    return context.json(result, 201);
+    return apiResponse(context, result, 201);
   });
 
   api.notFound((context) =>
-    context.json({ error: "not_found", message: "API route not found." }, 404),
+    apiResponse(context, { error: "not_found", message: "API route not found." }, 404),
   );
   app.route("/api", api);
 
@@ -362,7 +388,8 @@ export function createApp(service: SwarmbookService) {
           error.status as ContentfulStatusCode,
         );
       }
-      return context.json(
+      return apiResponse(
+        context,
         { error: error.code, message: error.message },
         error.status as ContentfulStatusCode,
       );
@@ -370,7 +397,8 @@ export function createApp(service: SwarmbookService) {
     if (error instanceof HTTPException) {
       const code = error.status === 400 ? "invalid_request" : "http_error";
       if (context.req.path.startsWith("/api/")) {
-        return context.json(
+        return apiResponse(
+          context,
           { error: code, message: error.message },
           error.status as ContentfulStatusCode,
         );
@@ -381,8 +409,18 @@ export function createApp(service: SwarmbookService) {
       );
     }
     console.error(error);
-    return context.json(
-      { error: "internal_error", message: "An unexpected server error occurred." },
+    if (context.req.path.startsWith("/api/") || context.req.path === "/health") {
+      return apiResponse(
+        context,
+        { error: "internal_error", message: "An unexpected server error occurred." },
+        500,
+      );
+    }
+    return context.html(
+      <ErrorPage
+        code="internal_error"
+        message="An unexpected server error occurred."
+      />,
       500,
     );
   });

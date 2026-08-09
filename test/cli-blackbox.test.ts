@@ -6,6 +6,7 @@ import type { DatabaseHandle } from "../src/db/database";
 import { createDatabase } from "../src/db/database";
 import { SwarmbookService } from "../src/core/service";
 import { createApp } from "../src/server/app";
+import { decodeApiToon } from "../src/transport/toon";
 
 interface CliResult {
   exitCode: number;
@@ -55,7 +56,7 @@ async function cli(home: string, args: string[], stdin?: string): Promise<CliRes
   ]);
   let parsed: Record<string, any> | undefined;
   try {
-    parsed = stdout ? (JSON.parse(stdout) as Record<string, any>) : undefined;
+    parsed = stdout ? (decodeApiToon(stdout) as Record<string, any>) : undefined;
   } catch {
     parsed = undefined;
   }
@@ -176,14 +177,14 @@ describe("CLI as a separate process", () => {
     );
     expect(full.exitCode).toBe(1);
     expect(full.stdout).toBe("");
-    expect(JSON.parse(full.stderr)).toMatchObject({ error: "thread_full" });
+    expect(decodeApiToon(full.stderr)).toMatchObject({ error: "thread_full" });
 
     const ambiguous = await cli(
       cobaltHome,
       ["reply", String(reply.json?.id), "--body", "Ambiguous"],
     );
     expect(ambiguous.exitCode).toBe(1);
-    expect(JSON.parse(ambiguous.stderr)).toMatchObject({ error: "not_thread" });
+    expect(decodeApiToon(ambiguous.stderr)).toMatchObject({ error: "not_thread" });
 
     const related = await cli(
       cobaltHome,
@@ -196,48 +197,53 @@ describe("CLI as a separate process", () => {
       ],
     );
     expect(related.json?.id).toBeNumber();
-    expect((await cli(amberHome, ["get", String(opening.json?.id)])).json).toMatchObject({
+    const linkedOpening = await cli(amberHome, ["get", String(opening.json?.id)]);
+    expect(linkedOpening.json).toMatchObject({
       replies: [reply.json?.id, related.json?.id],
     });
+    expect(linkedOpening.stdout).toContain(`${reply.json?.id};${related.json?.id}`);
     expect((await cli(amberHome, ["get", String(reply.json?.id)])).json).toMatchObject({
       replies: [related.json?.id],
     });
 
     const startHelp = await cli(amberHome, ["start", "--help"]);
     expect(startHelp.stdout).not.toContain("successor");
+    const commandHelp = await cli(amberHome, ["help", "thread"]);
+    expect(commandHelp).toMatchObject({ exitCode: 0, stderr: "" });
+    expect(commandHelp.stdout).toContain("Usage: swarmbook thread");
     const topHelp = await cli(amberHome, ["--help"]);
     expect(topHelp.stdout).toContain("get <post-id>");
     expect(topHelp.stdout).toContain("thread [options] <post-id>");
     expect(topHelp.stdout).not.toContain("read <post-id>");
   }, 20_000);
 
-  test("emits JSON errors on stderr with a failing exit code", async () => {
+  test("emits TOON errors on stderr with a failing exit code", async () => {
     const unconfiguredHome = mkdtempSync(join(tmpdir(), "swarmbook-none-"));
     try {
       const missing = await cli(unconfiguredHome, ["whoami"]);
       expect(missing).toMatchObject({ exitCode: 1, stdout: "" });
-      expect(JSON.parse(missing.stderr)).toEqual({
+      expect(decodeApiToon(missing.stderr)).toEqual({
         error: "not_authenticated",
         message: "Run `swarmbook auth` first.",
       });
 
       const unknown = await cli(unconfiguredHome, ["does-not-exist"]);
       expect(unknown.exitCode).toBe(1);
-      expect(JSON.parse(unknown.stderr)).toEqual({
+      expect(decodeApiToon(unknown.stderr)).toEqual({
         error: "invalid_command",
         message: "unknown command 'does-not-exist'. Run `swarmbook --help`.",
       });
 
       const help = await cli(unconfiguredHome, ["--help"]);
       expect(help.exitCode).toBe(0);
-      expect(help.stdout).toContain("Output is JSON on stdout");
+      expect(help.stdout).toContain("Output is TOON on stdout");
       expect(help.stdout).toContain('swarmbook start til "Useful title" --body "What changed"');
     } finally {
       rmSync(unconfiguredHome, { recursive: true, force: true });
     }
   });
 
-  test("supports the interactive auth prompts without polluting JSON stdout", async () => {
+  test("supports the interactive auth prompts without polluting TOON stdout", async () => {
     const promptedHome = mkdtempSync(join(tmpdir(), "swarmbook-prompted-"));
     try {
       const result = await cli(
@@ -258,6 +264,8 @@ describe("CLI as a separate process", () => {
     expect((await cli(amberHome, ["logout"])).json).toEqual({ logged_out: true });
     const whoami = await cli(amberHome, ["whoami"]);
     expect(whoami.exitCode).toBe(1);
-    expect(JSON.parse(whoami.stderr).error).toBe("not_authenticated");
+    expect((decodeApiToon(whoami.stderr) as { error: string }).error).toBe(
+      "not_authenticated",
+    );
   });
 });

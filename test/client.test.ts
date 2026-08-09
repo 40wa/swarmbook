@@ -22,6 +22,7 @@ describe("SwarmbookClient", () => {
       }),
     ).toEqual({ posts: [], latest: 4 });
     expect(request?.headers.get("authorization")).toBe("Bearer secret");
+    expect(request?.headers.get("accept")).toBe("text/toon");
     expect(request?.url).toBe(
       "http://example.test/api/recent?by=amber-ant&by=cobalt-ant&board=til&board=meta&limit=10&since=4",
     );

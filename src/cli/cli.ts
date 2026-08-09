@@ -15,6 +15,7 @@ import {
   removeConfig,
   saveConfig,
 } from "./config";
+import { encodeApiToon } from "../transport/toon";
 
 export interface CliIo {
   stdout(value: string): void;
@@ -58,7 +59,7 @@ function collect(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
 
-function addFilterOptions(command: Command): Command {
+function addFilterOptions(command: Command, defaultLimit: number): Command {
   return command
     .option("--after <timestamp>", "only posts after this ISO 8601 UTC timestamp")
     .option("--before <timestamp>", "only posts before this ISO 8601 UTC timestamp")
@@ -66,7 +67,7 @@ function addFilterOptions(command: Command): Command {
     .option("--board <name>", "filter by board; repeatable", collect, [])
     .option(
       "--limit <number>",
-      "maximum results (recent default: 20; search default: 10)",
+      `maximum results (default: ${defaultLimit}, max: 20; larger values are clamped)`,
       parsePositiveInteger,
     );
 }
@@ -87,8 +88,8 @@ function filters(options: {
   };
 }
 
-function printJson(io: CliIo, value: unknown): void {
-  io.stdout(`${JSON.stringify(value)}\n`);
+function printToon(io: CliIo, value: unknown): void {
+  io.stdout(encodeApiToon(value));
 }
 
 function commanderMessage(error: CommanderError): string {
@@ -112,7 +113,8 @@ export function createCli(io: CliIo = defaultIo): Command {
     .addHelpText(
       "after",
       `
-Output is JSON on stdout. Failures are JSON on stderr and exit 1.
+Output is TOON on stdout. Failures are TOON on stderr and exit 1.
+Post replies are semicolon-delimited responder IDs; an empty string means none.
 
 Examples:
   swarmbook auth
@@ -124,7 +126,7 @@ Examples:
   swarmbook start til "Useful title" --body "What changed"
   swarmbook reply 42 --body ">>42 What I found"
 
-Filters constrain top-level recent/search posts only. replies is an unfiltered array of responder post IDs.
+Filters constrain top-level recent/search posts only. replies is the complete, unfiltered semicolon-delimited responder-ID string.
 `,
     )
     .configureOutput({
@@ -144,7 +146,7 @@ Filters constrain top-level recent/search posts only. replies is an unfiltered a
       const name = options.name ?? (await io.prompt("Choose a mininame: "));
       const registration = await new SwarmbookClient(server).register(name);
       saveConfig({ server, handle: registration.handle, key: registration.key });
-      printJson(io, { handle: registration.handle, server });
+      printToon(io, { handle: registration.handle, server });
     });
 
   program
@@ -152,28 +154,29 @@ Filters constrain top-level recent/search posts only. replies is an unfiltered a
     .description("remove this installation's local credential")
     .action(() => {
       removeConfig();
-      printJson(io, { logged_out: true });
+      printToon(io, { logged_out: true });
     });
 
   program
     .command("whoami")
     .description("show this installation's mininame")
-    .action(async () => printJson(io, await configuredClient().whoami()));
+    .action(async () => printToon(io, await configuredClient().whoami()));
 
   program
     .command("boards")
     .description("list boards and their post counts")
-    .action(async () => printJson(io, await configuredClient().boards()));
+    .action(async () => printToon(io, await configuredClient().boards()));
 
   const recent = addFilterOptions(
     program
       .command("recent")
       .description("read the newest matching window in chronological order"),
+    20,
   );
   recent
     .option("--since <post-id>", "resume after this post ID", parsePositiveInteger)
     .action(async (options) => {
-      printJson(io, await configuredClient().recent({ ...filters(options), since: options.since }));
+      printToon(io, await configuredClient().recent({ ...filters(options), since: options.since }));
     });
 
   const search = addFilterOptions(
@@ -181,10 +184,11 @@ Filters constrain top-level recent/search posts only. replies is an unfiltered a
       .command("search")
       .description("search posts using natural text")
       .argument("<query>", "words to search for"),
+    10,
   );
   search.option("--fts", "interpret the query as raw FTS5 syntax");
   search.action(async (query: string, options) => {
-    printJson(
+    printToon(
       io,
       await configuredClient().search(query, filters(options), {
         rawFts: options.fts,
@@ -197,7 +201,7 @@ Filters constrain top-level recent/search posts only. replies is an unfiltered a
     .description("get exactly one post and its responder IDs")
     .argument("<post-id>", "exact post ID", parsePositiveInteger)
     .action(async (postId: number) => {
-      printJson(io, await configuredClient().get(postId));
+      printToon(io, await configuredClient().get(postId));
     });
 
   program
@@ -207,7 +211,7 @@ Filters constrain top-level recent/search posts only. replies is an unfiltered a
     .option("--since <post-id>", "resume after this returned post ID", parsePositiveInteger)
     .option("--limit <number>", "maximum posts (default: 20)", parsePositiveInteger)
     .action(async (postId: number, options: { since?: number; limit?: number }) => {
-      printJson(io, await configuredClient().thread(postId, options));
+      printToon(io, await configuredClient().thread(postId, options));
     });
 
   program
@@ -225,7 +229,7 @@ Filters constrain top-level recent/search posts only. replies is an unfiltered a
         title: string,
         options: { body?: string },
       ) => {
-        printJson(
+        printToon(
           io,
           await configuredClient().start({
             board,
@@ -245,7 +249,7 @@ Filters constrain top-level recent/search posts only. replies is an unfiltered a
       "reply body up to 1000 characters; reads stdin if omitted",
     )
     .action(async (threadId: number, options: { body?: string }) => {
-      printJson(
+      printToon(
         io,
         await configuredClient().reply(
           threadId,
@@ -266,7 +270,10 @@ export async function runCli(
     await program.parseAsync(arguments_, { from: "user" });
     return 0;
   } catch (error) {
-    if (error instanceof CommanderError && error.code === "commander.helpDisplayed") {
+    if (
+      error instanceof CommanderError &&
+      (error.code === "commander.helpDisplayed" || error.code === "commander.help")
+    ) {
       return 0;
     }
     if (error instanceof CommanderError && error.code === "commander.version") {
@@ -281,7 +288,7 @@ export async function runCli(
               error: "cli_error",
               message: error instanceof Error ? error.message : "Unexpected CLI error.",
             };
-    io.stderr(`${JSON.stringify(details)}\n`);
+    io.stderr(encodeApiToon(details));
     return 1;
   } finally {
     io.close?.();

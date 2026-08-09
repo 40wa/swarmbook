@@ -1,3 +1,9 @@
+import {
+  decodeApiToon,
+  JSON_MEDIA_TYPE,
+  TOON_MEDIA_TYPE,
+} from "../transport/toon";
+
 export class SwarmbookClientError extends Error {
   constructor(
     public readonly code: string,
@@ -126,7 +132,7 @@ export class SwarmbookClient {
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const headers = new Headers(init.headers);
-    headers.set("accept", "application/json");
+    headers.set("accept", TOON_MEDIA_TYPE);
     if (init.body !== undefined) headers.set("content-type", "application/json");
     if (this.key) headers.set("authorization", `Bearer ${this.key}`);
 
@@ -148,11 +154,19 @@ export class SwarmbookClient {
 
     let payload: unknown;
     try {
-      payload = await response.json();
+      const body = await response.text();
+      const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+      if (contentType.includes(TOON_MEDIA_TYPE)) {
+        payload = decodeApiToon(body);
+      } else if (contentType.includes(JSON_MEDIA_TYPE)) {
+        payload = JSON.parse(body);
+      } else {
+        throw new Error(`unsupported content type ${contentType || "<missing>"}`);
+      }
     } catch {
       throw new SwarmbookClientError(
         "invalid_response",
-        `Swarmbook returned HTTP ${response.status} without a JSON response.`,
+        `Swarmbook returned HTTP ${response.status} without a valid TOON or JSON response.`,
         response.status,
       );
     }

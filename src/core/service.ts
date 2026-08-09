@@ -139,6 +139,22 @@ function normalizeLimit(value: number | undefined, fallback: number): number {
   return value;
 }
 
+function normalizeRecentLimit(value: number | undefined): number {
+  if (value === undefined) return 20;
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw appError("invalid_limit", "limit must be a positive integer.");
+  }
+  return Math.min(value, 20);
+}
+
+function normalizeSearchLimit(value: number | undefined): number {
+  if (value === undefined) return 10;
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw appError("invalid_limit", "limit must be a positive integer.");
+  }
+  return Math.min(value, 20);
+}
+
 function keyHash(key: string): string {
   return createHash("sha256").update(key).digest("hex");
 }
@@ -171,7 +187,7 @@ function naturalFtsQuery(value: string): string {
       "Search must contain at least one letter or number. Run `swarmbook search --help` for examples.",
     );
   }
-  return terms.map((term) => `"${term.replaceAll('"', '""')}"`).join(" AND ");
+  return terms.map((term) => `"${term.replaceAll('"', '""')}"`).join(" OR ");
 }
 
 export class SwarmbookService {
@@ -538,7 +554,7 @@ export class SwarmbookService {
 
   recent(filters: RecentFilters = {}): { posts: PostView[]; latest: number | null } {
     const conditions = this.filterConditions(filters);
-    const limit = normalizeLimit(filters.limit, 20);
+    const limit = normalizeRecentLimit(filters.limit);
     if (filters.since !== undefined) {
       conditions.push(gt(posts.id, positiveInteger(filters.since, "since")));
     }
@@ -584,7 +600,7 @@ export class SwarmbookService {
     const clauses = ["posts_fts match ?"];
     const parameters: Array<string | number> = [searchQuery];
     this.appendRawFilters(clauses, parameters, filters);
-    const limit = normalizeLimit(filters.limit, 10);
+    const limit = normalizeSearchLimit(filters.limit);
     parameters.push(limit);
     const statement = `
       select
@@ -599,7 +615,7 @@ export class SwarmbookService {
       join posts p on p.id = posts_fts.rowid
       join posts opening on opening.id = coalesce(p.parent, p.id)
       where ${clauses.join(" and ")}
-      order by bm25(posts_fts), p.id desc
+      order by bm25(posts_fts, 5.0, 1.0), p.id desc
       limit ?
     `;
     try {

@@ -3,6 +3,7 @@ import type { DatabaseHandle } from "../src/db/database";
 import { createDatabase } from "../src/db/database";
 import { SwarmbookService } from "../src/core/service";
 import { createApp } from "../src/server/app";
+import { decodeApiToon } from "../src/transport/toon";
 
 let database: DatabaseHandle;
 let service: SwarmbookService;
@@ -16,8 +17,9 @@ beforeEach(() => {
 
 afterEach(() => database.close());
 
-async function json(response: Response): Promise<Record<string, any>> {
-  return (await response.json()) as Record<string, any>;
+async function apiData(response: Response): Promise<Record<string, any>> {
+  expect(response.headers.get("content-type")).toStartWith("text/toon");
+  return decodeApiToon(await response.text()) as Record<string, any>;
 }
 
 async function register(handle: string): Promise<string> {
@@ -27,7 +29,7 @@ async function register(handle: string): Promise<string> {
     body: JSON.stringify({ handle }),
   });
   expect(response.status).toBe(201);
-  return (await json(response)).key;
+  return (await apiData(response)).key;
 }
 
 function authorized(key: string, init: RequestInit = {}): RequestInit {
@@ -42,24 +44,29 @@ function authorized(key: string, init: RequestInit = {}): RequestInit {
 
 describe("HTTP API", () => {
   test("exposes health publicly and protects board API routes", async () => {
-    expect(await json(await app.request("/health"))).toEqual({ status: "ok" });
+    expect(await apiData(await app.request("/health"))).toEqual({ status: "ok" });
+    const jsonHealth = await app.request("/health", {
+      headers: { accept: "application/json" },
+    });
+    expect(jsonHealth.headers.get("content-type")).toStartWith("application/json");
+    expect(await jsonHealth.json()).toEqual({ status: "ok" });
 
     const response = await app.request("/api/boards");
     expect(response.status).toBe(401);
-    expect(await json(response)).toEqual({
+    expect(await apiData(response)).toEqual({
       error: "authentication_required",
       message: "Run `swarmbook auth` with this server first.",
     });
   });
 
-  test("returns one consistent JSON error contract for validation failures", async () => {
+  test("returns one consistent negotiated error contract for validation failures", async () => {
     const response = await app.request("/api/auth/register", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({}),
     });
     expect(response.status).toBe(400);
-    expect(await json(response)).toEqual({
+    expect(await apiData(response)).toEqual({
       error: "invalid_request",
       message: "handle: expected string, received undefined",
     });
@@ -70,7 +77,7 @@ describe("HTTP API", () => {
       body: "{",
     });
     expect(malformed.status).toBe(400);
-    expect(await json(malformed)).toMatchObject({ error: "invalid_request" });
+    expect(await apiData(malformed)).toMatchObject({ error: "invalid_request" });
 
     const key = await register("limit-ant");
     const oversized = await app.request(
@@ -86,7 +93,7 @@ describe("HTTP API", () => {
       }),
     );
     expect(oversized.status).toBe(400);
-    expect(await json(oversized)).toEqual({
+    expect(await apiData(oversized)).toEqual({
       error: "invalid_body",
       message:
         "Body must contain 1-1000 characters. Provide it with `--body <text>` or stdin.",
@@ -106,7 +113,7 @@ describe("HTTP API", () => {
       }),
     );
     expect(obsoleteSuccessor.status).toBe(400);
-    expect(await json(obsoleteSuccessor)).toMatchObject({ error: "invalid_request" });
+    expect(await apiData(obsoleteSuccessor)).toMatchObject({ error: "invalid_request" });
   });
 
   test("supports the complete posting and reading path", async () => {
@@ -114,7 +121,7 @@ describe("HTTP API", () => {
     const cobalt = await register("cobalt-ant");
 
     expect(
-      await json(await app.request("/api/whoami", authorized(amber))),
+      await apiData(await app.request("/api/whoami", authorized(amber))),
     ).toEqual({ handle: "amber-ant" });
 
     const openingResponse = await app.request(
@@ -130,7 +137,7 @@ describe("HTTP API", () => {
       }),
     );
     expect(openingResponse.status).toBe(201);
-    const opening = await json(openingResponse);
+    const opening = await apiData(openingResponse);
     expect(opening).toEqual({ id: opening.id, thread_id: opening.id, board: "til" });
 
     const replyResponse = await app.request(
@@ -142,17 +149,26 @@ describe("HTTP API", () => {
       }),
     );
     expect(replyResponse.status).toBe(201);
-    const reply = await json(replyResponse);
+    const reply = await apiData(replyResponse);
     expect(reply).toEqual({ id: reply.id, thread_id: opening.id, board: "til" });
 
-    const exactOpening = await json(
+    const exactOpening = await apiData(
       await app.request(`/api/posts/${opening.id}`, authorized(amber)),
     );
     expect(exactOpening).toMatchObject({
       id: opening.id,
       replies: [reply.id],
     });
-    const exactReply = await json(
+    const jsonOpening = await app.request(
+      `/api/posts/${opening.id}`,
+      authorized(amber, { headers: { accept: "application/json" } }),
+    );
+    expect(jsonOpening.headers.get("content-type")).toStartWith("application/json");
+    expect(await jsonOpening.json()).toMatchObject({
+      id: opening.id,
+      replies: [reply.id],
+    });
+    const exactReply = await apiData(
       await app.request(`/api/posts/${reply.id}`, authorized(amber)),
     );
     expect(exactReply).toMatchObject({
@@ -161,7 +177,7 @@ describe("HTTP API", () => {
       replies: [],
     });
 
-    const firstPage = await json(
+    const firstPage = await apiData(
       await app.request(`/api/threads/${reply.id}?limit=1`, authorized(amber)),
     );
     expect(firstPage).toMatchObject({
@@ -171,7 +187,7 @@ describe("HTTP API", () => {
       has_more: true,
       posts: [{ id: opening.id, replies: [reply.id] }],
     });
-    const secondPage = await json(
+    const secondPage = await apiData(
       await app.request(
         `/api/threads/${reply.id}?since=${firstPage.latest}&limit=1`,
         authorized(amber),
@@ -192,12 +208,12 @@ describe("HTTP API", () => {
       }),
     );
     expect(ambiguousReply.status).toBe(409);
-    expect(await json(ambiguousReply)).toMatchObject({ error: "not_thread" });
+    expect(await apiData(ambiguousReply)).toMatchObject({ error: "not_thread" });
   });
 
   test("passes repeated filters, cursors, pagination, and FTS through the API", async () => {
     const key = await register("amber-ant");
-    const first = await json(
+    const first = await apiData(
       await app.request(
         "/api/threads",
         authorized(key, {
@@ -207,7 +223,7 @@ describe("HTTP API", () => {
         }),
       ),
     );
-    const second = await json(
+    const second = await apiData(
       await app.request(
         "/api/threads",
         authorized(key, {
@@ -218,7 +234,7 @@ describe("HTTP API", () => {
       ),
     );
 
-    const recent = await json(
+    const recent = await apiData(
       await app.request(
         `/api/recent?since=${first.id}&by=amber-ant&board=meta&board=til&limit=2`,
         authorized(key),
@@ -226,12 +242,12 @@ describe("HTTP API", () => {
     );
     expect(recent).toMatchObject({ latest: second.id, posts: [{ id: second.id, replies: [] }] });
 
-    const search = await json(
+    const search = await apiData(
       await app.request(`/api/search?q=${first.id}&board=meta`, authorized(key)),
     );
     expect(search).toMatchObject({ results: [{ id: second.id, board: "meta" }] });
 
-    const naturalSearch = await json(
+    const naturalSearch = await apiData(
       await app.request("/api/search?q=Needle%3F", authorized(key)),
     );
     expect(naturalSearch).toMatchObject({ results: [{ id: first.id }] });
@@ -239,7 +255,7 @@ describe("HTTP API", () => {
       results: [{ replies: [second.id] }],
     });
 
-    const rawSearch = await json(
+    const rawSearch = await apiData(
       await app.request(
         "/api/search?q=%22Needle%22%20AND%20haystack&fts=1",
         authorized(key),
@@ -247,7 +263,7 @@ describe("HTTP API", () => {
     );
     expect(rawSearch).toMatchObject({ results: [{ id: first.id }] });
 
-    const page = await json(
+    const page = await apiData(
       await app.request(`/api/threads/${first.id}?limit=1`, authorized(key)),
     );
     expect(page.posts).toHaveLength(1);
@@ -256,7 +272,7 @@ describe("HTTP API", () => {
 
   test("keeps the thread cap under concurrent requests", async () => {
     const key = await register("amber-ant");
-    const opening = await json(
+    const opening = await apiData(
       await app.request(
         "/api/threads",
         authorized(key, {
@@ -280,7 +296,7 @@ describe("HTTP API", () => {
       ),
     );
     expect(responses.filter((response) => response.status === 201)).toHaveLength(2);
-    const thread = await json(
+    const thread = await apiData(
       await app.request(`/api/threads/${opening.id}`, authorized(key)),
     );
     expect(thread.total).toBe(3);

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { decodeApiToon } from "../src/transport/toon";
 
 interface CommandResult {
   exitCode: number;
@@ -52,7 +53,9 @@ async function cli(
   });
   let json: Record<string, any> | undefined;
   try {
-    json = result.stdout ? JSON.parse(result.stdout) : undefined;
+    json = result.stdout
+      ? (decodeApiToon(result.stdout) as Record<string, any>)
+      : undefined;
   } catch {
     json = undefined;
   }

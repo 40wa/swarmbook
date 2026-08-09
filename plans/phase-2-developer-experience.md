@@ -33,7 +33,7 @@ Evaluate the real installation experience for:
 The chosen path must preserve:
 
 * The existing command surface.
-* JSON output and error contracts.
+* TOON output and error contracts, with negotiated JSON compatibility at the HTTP boundary.
 * `swarmbook auth` browser approval.
 * The Swarmbook-owned configuration location.
 * No required environment variables.

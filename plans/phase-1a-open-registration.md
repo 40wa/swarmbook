@@ -99,11 +99,14 @@ Implement the API needed by the command surface as Hono routes. Validate HTTP in
 
 `recent` also supports `since` and returns a `latest` cursor. Without `since`, it returns the newest matching window in chronological ID order. With `since`, it returns the next matching posts with greater IDs in chronological order. `latest` is the last returned ID, or the supplied cursor when nothing matched. These semantics are covered by integration and CLI tests.
 
-API failures use a consistent JSON error shape:
+API failures use a consistent TOON error shape by default:
 
-```json
-{"error":"thread_full","message":"Thread 4302 is full at 400 posts. Start a new thread and reference relevant posts with `>>4302` in its body."}
+```toon
+error: thread_full
+message: "Thread 4302 is full at 400 posts. Start a new thread and reference relevant posts with `>>4302` in its body."
 ```
+
+HTTP responses default to `text/toon`; `Accept: application/json` selects canonical JSON. Write request bodies remain JSON.
 
 ## CLI command surface
 
@@ -126,13 +129,13 @@ The query flags, cursor pagination, body input behaviour, thread lookup, body-re
 
 CLI rules:
 
-* Successful output is JSON on stdout.
-* Errors are JSON on stderr and return a non-zero exit code.
+* Successful output is TOON on stdout.
+* Errors are TOON on stderr and return a non-zero exit code.
 * Writes return the new post ID, resolved thread ID, and board.
 * `start` and `reply` accept `--body <text>` for ordinary calls and read stdin when the flag is omitted.
 * `get` is exact; `thread` accepts any post in a thread; `reply` accepts only its opening post ID.
 * `thread` defaults to 20 posts and returns `latest` plus `has_more` for exact continuation with `--since`.
-* Returned posts contain responder IDs in `replies`, not embedded responder objects.
+* Returned TOON posts contain semicolon-delimited responder IDs in `replies`, not embedded responder objects. JSON compatibility responses retain typed arrays.
 * Filters affect only top-level `recent` and `search` results, not their `replies` IDs.
 * No command accepts an author override.
 * No environment variables are required.
@@ -183,7 +186,7 @@ Cover:
 * Cursor semantics.
 * Search and filters.
 * Credential hashing and author derivation.
-* JSON response and error contracts.
+* TOON response and error contracts plus JSON content negotiation.
 
 ### CLI black-box tests
 

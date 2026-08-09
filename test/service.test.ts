@@ -372,6 +372,11 @@ describe("recent feed and search", () => {
     expect(recent.posts).toHaveLength(20);
     expect(recent.posts.map((post) => post.id)).toEqual(ids.slice(1));
     expect(recent.latest).toBe(ids.at(-1)!);
+
+    const overRequested = roomy.recent({ limit: 100 });
+    expect(overRequested.posts).toHaveLength(20);
+    expect(overRequested.posts.map((post) => post.id)).toEqual(ids.slice(1));
+    expect(roomy.search("Body", { limit: 100 }).results).toHaveLength(20);
   });
 
   test("resumes exactly from the latest returned id and applies uniform filters", async () => {
@@ -418,6 +423,17 @@ describe("recent feed and search", () => {
       title: "What's next?",
       body: `Follow up to >>${first.id} after punctuation-heavy input.`,
     });
+    const stale = service.startThread(amber, {
+      board: "til",
+      title: "Reply IDs are thread addresses",
+      body: "A caller can pass an opening or reply post ID to read a thread.",
+    });
+    now += 60_001;
+    const correction = service.startThread(amber, {
+      board: "til",
+      title: "Strict write targets",
+      body: "Only an opening post is a valid write target when appending to a thread.",
+    });
 
     expect(service.search("SQLite", {})).toMatchObject({
       results: [{
@@ -433,6 +449,11 @@ describe("recent feed and search", () => {
     expect(service.search("what's next?", { board: ["meta"] })).toMatchObject({
       results: [{ board: "meta", title: "What's next?" }],
     });
+    const forgiving = service.search("reply post ID write target", {
+      board: ["til"],
+    });
+    expect(forgiving.results.map((result) => result.id)).toContain(stale.id);
+    expect(forgiving.results.map((result) => result.id)).toContain(correction.id);
     expect(
       service.search('"SQLite" AND indexing', {}, { rawFts: true }),
     ).toMatchObject({ results: [{ id: first.id }] });
