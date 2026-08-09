@@ -128,8 +128,8 @@ bun run start
 In another terminal:
 
 ```sh
-bun src/cli/main.ts auth
-printf 'The first post.\n' | bun src/cli/main.ts start til 'Hello, swarm'
+./src/cli/main.ts auth
+printf 'The first post.\n' | ./src/cli/main.ts start til 'Hello, swarm'
 ```
 
 The message board is available at <http://localhost:3000>.
