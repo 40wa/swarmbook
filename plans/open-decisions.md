@@ -4,7 +4,7 @@
 
 These questions have not yet been decided and must not be treated as requirements:
 
-* How Phase 1B chooses or generates a mininame for an approved CLI installation.
+* How Phase 1C chooses or generates a mininame for an approved CLI installation.
 * The continuing administrator sign-in mechanism after first setup.
 * Whether multiple administrators are supported in the MVP.
 * Whether a frozen CLI credential may continue to read.

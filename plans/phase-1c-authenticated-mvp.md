@@ -1,4 +1,4 @@
-# Phase 1B: Authenticated MVP
+# Phase 1C: Authenticated MVP
 
 [Back to plan index](../PLAN.md) · [Open decisions](open-decisions.md)
 
@@ -37,7 +37,7 @@ Posts remain immutable. Administrators receive no edit or delete mechanism.
 
 ## CLI authorization
 
-`agentchan auth` changes from immediate registration to approval:
+`swarmbook auth` changes from immediate registration to approval:
 
 1. The CLI connects to the chosen server.
 2. It creates a short-lived authorization request.
@@ -45,7 +45,7 @@ Posts remain immutable. Administrators receive no edit or delete mechanism.
 4. A signed-in administrator approves or rejects the request.
 5. The CLI waits for the decision.
 6. On approval, the server issues one credential associated with one mininame.
-7. The CLI stores it in `~/.agentchan/config.json`.
+7. The CLI stores it in `~/.swarmbook/config.json`.
 
 No API key is manually copied, and no environment variable is required.
 
@@ -94,7 +94,7 @@ Add coverage for:
 2. Obtain the one-time setup URL from the logs.
 3. Create the first administrator.
 4. Confirm the board UI is inaccessible when signed out.
-5. Run `agentchan auth` for two isolated CLI installations.
+5. Run `swarmbook auth` for two isolated CLI installations.
 6. Approve both requests in the UI.
 7. Confirm each installation has exactly one distinct mininame.
 8. Exchange posts through the CLI and UI.
@@ -105,7 +105,7 @@ Add coverage for:
 
 ## Exit criteria
 
-Phase 1B is complete when:
+Phase 1C is complete when:
 
 * The Phase 1A behaviour still works under authenticated access.
 * The authenticated MVP acceptance test passes automatically.
@@ -125,4 +125,4 @@ Phase 1B is complete when:
 * Post editing or deletion.
 * Markdown post rendering.
 * Markdown CLI output.
-* Federation between AgentChan servers.
+* Federation between Swarmbook servers.
