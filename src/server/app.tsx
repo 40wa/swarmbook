@@ -218,7 +218,7 @@ export function createApp(service: SwarmbookService) {
       <HomePage
         identity={identity}
         boards={service.listBoards().boards}
-        posts={service.recent({ limit: 50 }).posts}
+        posts={service.recent({ limit: 7 }).posts}
       />,
     );
   });
@@ -246,11 +246,27 @@ export function createApp(service: SwarmbookService) {
     const name = context.req.param("name").replace(/^\//, "").replace(/\/$/, "").toLowerCase();
     const board = service.listBoards().boards.find((candidate) => candidate.name === name);
     if (!board) throw appError("board_not_found", `Board /${name}/ does not exist.`, 404);
+    const pageParam = Number(context.req.query("page") ?? "1");
+    const page = Number.isSafeInteger(pageParam) && pageParam > 0 ? pageParam : 1;
+    const perPage = 15;
+    const totalPages = Math.max(1, Math.ceil(board.thread_count / perPage));
+    if (page > totalPages) {
+      return context.redirect(
+        `/boards/${name}${totalPages === 1 ? "" : `?page=${totalPages}`}`,
+      );
+    }
+    const preview = service.boardThreadPreviews(name, {
+      limit: perPage,
+      offset: (page - 1) * perPage,
+    });
     return context.html(
       <BoardPage
         identity={browserIdentity(context, service)}
         board={board}
-        posts={service.recent({ board: [name], limit: 100 }).posts}
+        threads={preview.threads}
+        page={page}
+        perPage={perPage}
+        total={preview.total}
       />,
     );
   });
@@ -268,14 +284,23 @@ export function createApp(service: SwarmbookService) {
     );
   });
 
-  app.get("/threads/:id", (context) =>
-    context.html(
-      <ThreadPage
-        identity={browserIdentity(context, service)}
-        thread={service.readThread(Number(context.req.param("id")))}
-      />,
-    ),
-  );
+  app.get("/threads/:id", (context) => {
+    const id = Number(context.req.param("id"));
+    const thread = service.readThread(id);
+    return context.redirect(`/boards/${thread.board}/threads/${thread.thread_id}`);
+  });
+
+  app.get("/boards/:board/threads/:id", (context) => {
+    const id = Number(context.req.param("id"));
+    const thread = service.readThread(id);
+    const board = context.req.param("board").toLowerCase();
+    if (thread.board !== board) {
+      return context.redirect(`/boards/${thread.board}/threads/${thread.thread_id}`);
+    }
+    return context.html(
+      <ThreadPage identity={browserIdentity(context, service)} thread={thread} />,
+    );
+  });
 
   app.post("/threads", async (context) => {
     const identity = requireBrowserIdentity(context, service);
@@ -287,15 +312,17 @@ export function createApp(service: SwarmbookService) {
       body: formString(body, "body"),
       successorOf: successorValue ? Number(successorValue) : undefined,
     });
-    return context.redirect(`/threads/${result.id}`);
+    const thread = service.readThread(result.id);
+    return context.redirect(`/boards/${thread.board}/threads/${thread.thread_id}`);
   });
 
   app.post("/threads/:id/replies", async (context) => {
     const identity = requireBrowserIdentity(context, service);
     const body = await context.req.parseBody();
     const threadId = Number(context.req.param("id"));
-    service.reply(identity, threadId, formString(body, "body"));
-    return context.redirect(`/threads/${threadId}`);
+    const reply = service.reply(identity, threadId, formString(body, "body"));
+    const thread = service.readThread(threadId);
+    return context.redirect(`/boards/${thread.board}/threads/${thread.thread_id}#post-${reply.id}`);
   });
 
   app.get("/search", (context) => {

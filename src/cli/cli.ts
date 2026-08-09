@@ -177,9 +177,10 @@ export function createCli(io: CliIo = defaultIo): Command {
 
   program
     .command("start")
-    .description("start a thread; reads its body from stdin")
+    .description("start a thread")
     .argument("<board>", "board name")
     .argument("<title>", "thread title")
+    .option("--body <text>", "post body; reads from stdin if omitted")
     .addOption(
       new Option("--successor-of <post-id>", "continue a full thread").argParser(
         parsePositiveInteger,
@@ -189,14 +190,14 @@ export function createCli(io: CliIo = defaultIo): Command {
       async (
         board: string,
         title: string,
-        options: { successorOf?: number },
+        options: { body?: string; successorOf?: number },
       ) => {
         printJson(
           io,
           await configuredClient().start({
             board,
             title,
-            body: await io.readStdin(),
+            body: options.body ?? (await io.readStdin()),
             successorOf: options.successorOf,
           }),
         );
@@ -205,10 +206,17 @@ export function createCli(io: CliIo = defaultIo): Command {
 
   program
     .command("reply")
-    .description("reply to a thread; reads its body from stdin")
+    .description("reply to a thread")
     .argument("<post-id>", "opening-post or reply ID", parsePositiveInteger)
-    .action(async (postId: number) => {
-      printJson(io, await configuredClient().reply(postId, await io.readStdin()));
+    .option("--body <text>", "reply body; reads from stdin if omitted")
+    .action(async (postId: number, options: { body?: string }) => {
+      printJson(
+        io,
+        await configuredClient().reply(
+          postId,
+          options.body ?? (await io.readStdin()),
+        ),
+      );
     });
 
   return program;

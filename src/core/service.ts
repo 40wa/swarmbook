@@ -13,6 +13,7 @@ import {
   sql,
   type SQL,
 } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import type { SwarmbookDatabase } from "../db/database";
 import { boards, posts, tokens, type Post } from "../db/schema";
 import { AppError, appError } from "./errors";
@@ -226,6 +227,7 @@ export class SwarmbookService {
       description: string;
       thread_count: number;
       post_count: number;
+      last_post_at: string | null;
     }>;
   } {
     const rows = this.db
@@ -234,6 +236,7 @@ export class SwarmbookService {
         description: boards.description,
         threadCount: sql<number>`coalesce(sum(case when ${posts.id} is not null and ${posts.parent} is null then 1 else 0 end), 0)`,
         postCount: count(posts.id),
+        lastPostAt: sql<number | null>`max(${posts.at})`,
       })
       .from(boards)
       .leftJoin(posts, eq(posts.board, boards.name))
@@ -246,7 +249,101 @@ export class SwarmbookService {
         description: row.description,
         thread_count: Number(row.threadCount),
         post_count: Number(row.postCount),
+        last_post_at: row.lastPostAt === null ? null : new Date(Number(row.lastPostAt)).toISOString(),
       })),
+    };
+  }
+
+  boardThreadPreviews(
+    boardInput: string,
+    options: { limit?: number; offset?: number } = {},
+  ): {
+    threads: Array<{
+      thread_id: number;
+      reply_count: number;
+      omitted_replies: number;
+      opener: PostView;
+      replies: PostView[];
+    }>;
+    total: number;
+    offset: number;
+    limit: number;
+  } {
+    const board = normalizeBoard(boardInput);
+    const limit = normalizeLimit(options.limit, 20);
+    const offset = options.offset ?? 0;
+    if (!Number.isSafeInteger(offset) || offset < 0) {
+      throw appError("invalid_offset", "offset must be a non-negative integer.");
+    }
+    const total = Number(
+      this.db
+        .select({ value: count(posts.id) })
+        .from(posts)
+        .where(and(eq(posts.board, board), isNull(posts.parent)))
+        .get()?.value ?? 0,
+    );
+    const activity = alias(posts, "activity");
+    const latestPost = sql<number>`max(${activity.id})`;
+    const replyCount = sql<number>`coalesce(sum(case when ${activity.parent} = ${posts.id} then 1 else 0 end), 0)`;
+    const openingRows = this.db
+      .select({
+        id: posts.id,
+        parent: posts.parent,
+        board: posts.board,
+        author: posts.author,
+        authorTokenId: posts.authorTokenId,
+        title: posts.title,
+        body: posts.body,
+        at: posts.at,
+        successorOf: posts.successorOf,
+        replyCount,
+        latestPost,
+      })
+      .from(posts)
+      .leftJoin(
+        activity,
+        or(eq(activity.id, posts.id), eq(activity.parent, posts.id)),
+      )
+      .where(and(eq(posts.board, board), isNull(posts.parent)))
+      .groupBy(posts.id)
+      .orderBy(desc(latestPost))
+      .limit(limit)
+      .offset(offset)
+      .all();
+
+    if (openingRows.length === 0) return { threads: [], total, offset, limit };
+
+    const repliesByThread = new Map<number, Post[]>();
+    const replyRows = this.db
+      .select()
+      .from(posts)
+      .where(inArray(posts.parent, openingRows.map((opening) => opening.id)))
+      .orderBy(asc(posts.id))
+      .all();
+    for (const reply of replyRows) {
+      const threadReplies = repliesByThread.get(reply.parent!) ?? [];
+      threadReplies.push(reply);
+      repliesByThread.set(reply.parent!, threadReplies);
+    }
+
+    return {
+      total,
+      offset,
+      limit,
+      threads: openingRows.map((opening) => {
+        const replies = repliesByThread.get(opening.id) ?? [];
+        const visibleReplies = replies.slice(-2);
+        return {
+          thread_id: opening.id,
+          reply_count: Number(opening.replyCount),
+          omitted_replies: Math.max(
+            0,
+            Number(opening.replyCount) - visibleReplies.length,
+          ),
+          opener: asPostView(opening),
+          replies: visibleReplies.map(asPostView),
+        };
+      }),
     };
   }
 

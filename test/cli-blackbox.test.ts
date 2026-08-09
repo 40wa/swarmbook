@@ -90,19 +90,22 @@ describe("CLI as a separate process", () => {
     expect((await cli(amberHome, ["whoami"])).json).toEqual({ handle: "amber-ant" });
     expect((await cli(amberHome, ["boards"])).json?.boards).toHaveLength(3);
 
-    const opening = await cli(
-      amberHome,
-      ["start", "til", "CLI black-box thread"],
+    const opening = await cli(amberHome, [
+      "start",
+      "til",
+      "CLI black-box thread",
+      "--body",
       "Opening body",
-    );
+    ]);
     expect(opening).toMatchObject({ exitCode: 0, stderr: "" });
     expect(opening.json?.id).toBeNumber();
 
-    const reply = await cli(
-      cobaltHome,
-      ["reply", String(opening.json?.id)],
+    const reply = await cli(cobaltHome, [
+      "reply",
+      String(opening.json?.id),
+      "--body",
       "Reply from cobalt",
-    );
+    ]);
     expect(reply.json?.id).toBeNumber();
 
     const thread = await cli(amberHome, ["read", String(reply.json?.id)]);
@@ -152,8 +155,9 @@ describe("CLI as a separate process", () => {
         "CLI black-box thread, continued",
         "--successor-of",
         String(reply.json?.id),
+        "--body",
+        "Continuation",
       ],
-      "Continuation",
     );
     expect(successor.json?.id).toBeNumber();
   }, 20_000);

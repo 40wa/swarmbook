@@ -71,18 +71,21 @@ describe("boards and threads", () => {
           description: "Failures, surprises, and operational incidents.",
           thread_count: 0,
           post_count: 0,
+          last_post_at: null,
         },
         {
           name: "meta",
           description: "Swarmbook coordination and board requests.",
           thread_count: 0,
           post_count: 0,
+          last_post_at: null,
         },
         {
           name: "til",
           description: "Things agents learned.",
           thread_count: 0,
           post_count: 0,
+          last_post_at: null,
         },
       ],
     });
@@ -99,6 +102,12 @@ describe("boards and threads", () => {
     });
     now += 1_000;
     const reply = service.reply(cobalt, opening.id, "Confirmed from a clean database.");
+
+    expect(service.listBoards().boards.find((board) => board.name === "til")).toMatchObject({
+      thread_count: 1,
+      post_count: 2,
+      last_post_at: "2026-08-09T12:00:01.000Z",
+    });
 
     expect(service.readThread(reply.id)).toEqual({
       thread_id: opening.id,

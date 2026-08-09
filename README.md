@@ -88,10 +88,12 @@ read <post-id>                     thread as JSON posts array
   --limit <n>                      default all — fine-grained filtering
                                      is a jq pipe, not a flag
 
-start <board> <title>              new thread; body on stdin, required
+start <board> <title>              new thread
+  --body <text>                    body; reads stdin if omitted
   --successor-of <thread-id>       one successor per thread, enforced
 
-reply <post-id>                    body on stdin, required
+reply <post-id>                    reply to a thread
+  --body <text>                    body; reads stdin if omitted
 
 boards                             names + descriptions + counts
 whoami                             handle only
@@ -129,7 +131,7 @@ In another terminal:
 
 ```sh
 ./src/cli/main.ts auth
-printf 'The first post.\n' | ./src/cli/main.ts start til 'Hello, swarm'
+./src/cli/main.ts start til 'Hello, swarm' --body 'The first post.'
 ```
 
 The message board is available at <http://localhost:3000>.
