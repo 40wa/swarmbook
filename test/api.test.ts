@@ -2,17 +2,21 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { DatabaseHandle } from "../src/db/database";
 import { createDatabase } from "../src/db/database";
 import { SwarmbookService } from "../src/core/service";
-import { createApp } from "../src/server/app";
+import { createApp, type AccessLogEntry } from "../src/server/app";
 import { decodeApiToon } from "../src/transport/toon";
 
 let database: DatabaseHandle;
 let service: SwarmbookService;
 let app: ReturnType<typeof createApp>;
+let accessLogs: AccessLogEntry[];
 
 beforeEach(() => {
   database = createDatabase(":memory:");
   service = new SwarmbookService(database.db, { threadPostLimit: 3 });
-  app = createApp(service);
+  accessLogs = [];
+  app = createApp(service, {
+    requestLogger: (entry) => accessLogs.push(entry),
+  });
 });
 
 afterEach(() => database.close());
@@ -96,7 +100,7 @@ describe("HTTP API", () => {
     expect(await apiData(oversized)).toEqual({
       error: "invalid_body",
       message:
-        "Body must contain 1-1000 characters. Provide it with `--body <text>` or stdin.",
+        "Body contains 1001 characters; maximum is 1000 (1 over). Shorten it and retry.",
     });
 
     const obsoleteSuccessor = await app.request(
@@ -240,12 +244,21 @@ describe("HTTP API", () => {
         authorized(key),
       ),
     );
-    expect(recent).toMatchObject({ latest: second.id, posts: [{ id: second.id, replies: [] }] });
+    expect(recent).toMatchObject({
+      latest: second.id,
+      effective_limit: 2,
+      truncated: false,
+      posts: [{ id: second.id, replies: [] }],
+    });
 
     const search = await apiData(
       await app.request(`/api/search?q=${first.id}&board=meta`, authorized(key)),
     );
-    expect(search).toMatchObject({ results: [{ id: second.id, board: "meta" }] });
+    expect(search).toMatchObject({
+      effective_limit: 10,
+      truncated: false,
+      results: [{ id: second.id, board: "meta" }],
+    });
 
     const naturalSearch = await apiData(
       await app.request("/api/search?q=Needle%3F", authorized(key)),
@@ -300,6 +313,38 @@ describe("HTTP API", () => {
       await app.request(`/api/threads/${opening.id}`, authorized(key)),
     );
     expect(thread.total).toBe(3);
+  });
+
+  test("logs safe request metadata without queries, bodies, or credentials", async () => {
+    expect(await apiData(await app.request("/health"))).toEqual({ status: "ok" });
+    expect(accessLogs).toEqual([]);
+
+    const key = await register("logged-ant");
+    await app.request(
+      "/api/search?q=private-search-words&limit=1",
+      authorized(key),
+    );
+
+    expect(accessLogs.at(-1)).toMatchObject({
+      event: "http_request",
+      method: "GET",
+      path: "/api/search",
+      status: 200,
+      actor: "logged-ant",
+    });
+    const missing = await app.request("/api/posts/999", authorized(key));
+    expect(missing.status).toBe(404);
+    expect(accessLogs.at(-1)).toMatchObject({
+      method: "GET",
+      path: "/api/posts/999",
+      status: 404,
+      actor: "logged-ant",
+    });
+    expect(accessLogs.at(-1)?.at).toBeString();
+    expect(accessLogs.at(-1)?.duration_ms).toBeNumber();
+    const serialized = JSON.stringify(accessLogs);
+    expect(serialized).not.toContain("private-search-words");
+    expect(serialized).not.toContain(key);
   });
 
 });

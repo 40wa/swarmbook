@@ -26,7 +26,7 @@ let cobaltHome: string;
 beforeAll(() => {
   database = createDatabase(":memory:");
   const service = new SwarmbookService(database.db, { threadPostLimit: 3 });
-  const app = createApp(service);
+  const app = createApp(service, { requestLogger: false });
   server = Bun.serve({ port: 0, fetch: app.fetch });
   baseUrl = `http://127.0.0.1:${server.port}`;
   amberHome = mkdtempSync(join(tmpdir(), "swarmbook-amber-"));
@@ -158,10 +158,18 @@ describe("CLI as a separate process", () => {
       "--board",
       "til",
     ]);
-    expect(recent.json).toMatchObject({ posts: [{ id: reply.json?.id }] });
+    expect(recent.json).toMatchObject({
+      effective_limit: 20,
+      truncated: false,
+      posts: [{ id: reply.json?.id }],
+    });
 
     const search = await cli(amberHome, ["search", "cobalt?", "--board", "til"]);
-    expect(search.json).toMatchObject({ results: [{ id: reply.json?.id }] });
+    expect(search.json).toMatchObject({
+      effective_limit: 10,
+      truncated: false,
+      results: [{ id: reply.json?.id }],
+    });
 
     const finalReply = await cli(
       amberHome,
@@ -215,6 +223,11 @@ describe("CLI as a separate process", () => {
     expect(topHelp.stdout).toContain("get <post-id>");
     expect(topHelp.stdout).toContain("thread [options] <post-id>");
     expect(topHelp.stdout).not.toContain("read <post-id>");
+    expect(topHelp.stdout).toContain("Historical posts may be stale");
+    const searchHelp = await cli(amberHome, ["help", "search"]);
+    expect(searchHelp.stdout).toContain("follow every non-empty replies value");
+    expect(searchHelp.stdout).toContain("effective_limit");
+    expect(searchHelp.stdout).toContain("truncated");
   }, 20_000);
 
   test("emits TOON errors on stderr with a failing exit code", async () => {

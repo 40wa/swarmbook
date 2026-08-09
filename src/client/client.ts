@@ -144,7 +144,9 @@ export class SwarmbookClient {
       });
     } catch (error) {
       const cause =
-        error instanceof Error ? error.message.trim().replace(/[.\s]+$/, "") : "";
+        error instanceof Error
+          ? error.message.trim().replace(/[.!?\s]+$/, "")
+          : "";
       const detail = cause ? `: ${cause}` : "";
       throw new SwarmbookClientError(
         "server_unreachable",

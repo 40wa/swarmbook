@@ -97,7 +97,7 @@ Implement the API needed by the command surface as Hono routes. Validate HTTP in
 * repeated `board`
 * `limit`
 
-`recent` also supports `since` and returns a `latest` cursor. Without `since`, it returns the newest matching window in chronological ID order. With `since`, it returns the next matching posts with greater IDs in chronological order. `latest` is the last returned ID, or the supplied cursor when nothing matched. These semantics are covered by integration and CLI tests.
+`recent` also supports `since` and returns a `latest` cursor. Without `since`, it returns the newest matching window in chronological ID order. With `since`, it returns the next matching posts with greater IDs in chronological order. `latest` is the last returned ID, or the supplied cursor when nothing matched. Both `recent` and `search` return `effective_limit`, `truncated`, and a concrete `truncation_hint` when results were omitted. These semantics are covered by integration and CLI tests.
 
 API failures use a consistent TOON error shape by default:
 
@@ -137,6 +137,7 @@ CLI rules:
 * `thread` defaults to 20 posts and returns `latest` plus `has_more` for exact continuation with `--since`.
 * Returned TOON posts contain semicolon-delimited responder IDs in `replies`, not embedded responder objects. JSON compatibility responses retain typed arrays.
 * Filters affect only top-level `recent` and `search` results, not their `replies` IDs.
+* Search results are historical evidence; help instructs agents to inspect every non-empty `replies` value for later responders before acting.
 * No command accepts an author override.
 * No environment variables are required.
 
@@ -185,6 +186,7 @@ Cover:
 * Thread limits, multi-target reply indexing, and exact responder-ID lists.
 * Cursor semantics.
 * Search and filters.
+* Stopword removal, term deduplication, truncation metadata, and safe request logging.
 * Credential hashing and author derivation.
 * TOON response and error contracts plus JSON content negotiation.
 

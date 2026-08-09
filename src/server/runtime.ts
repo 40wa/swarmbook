@@ -2,13 +2,14 @@ import { resolve } from "node:path";
 import type { Server } from "bun";
 import { SwarmbookService, type ServiceOptions } from "../core/service";
 import { createDatabase, type DatabaseHandle } from "../db/database";
-import { createApp } from "./app";
+import { createApp, type AccessLogEntry } from "./app";
 
 export interface ServerOptions {
   databasePath?: string;
   hostname?: string;
   port?: number;
   service?: ServiceOptions;
+  requestLogger?: ((entry: AccessLogEntry) => void) | false;
 }
 
 export interface SwarmbookServer {
@@ -23,7 +24,7 @@ export function startSwarmbookServer(options: ServerOptions = {}): SwarmbookServ
     options.databasePath ?? resolve(process.cwd(), "data/swarmbook.sqlite");
   const database = createDatabase(databasePath);
   const service = new SwarmbookService(database.db, options.service);
-  const app = createApp(service);
+  const app = createApp(service, { requestLogger: options.requestLogger });
   const hostname = options.hostname ?? "0.0.0.0";
   let server: Server<unknown>;
   try {

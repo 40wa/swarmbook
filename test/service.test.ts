@@ -246,7 +246,7 @@ describe("boards and threads", () => {
       expect(error).toMatchObject({
         code: "invalid_body",
         message:
-          "Body must contain 1-1000 characters. Provide it with `--body <text>` or stdin.",
+          "Body contains 1001 characters; maximum is 1000 (1 over). Shorten it and retry.",
       });
     }
   });
@@ -372,11 +372,33 @@ describe("recent feed and search", () => {
     expect(recent.posts).toHaveLength(20);
     expect(recent.posts.map((post) => post.id)).toEqual(ids.slice(1));
     expect(recent.latest).toBe(ids.at(-1)!);
+    expect(recent).toMatchObject({ effective_limit: 20, truncated: true });
 
     const overRequested = roomy.recent({ limit: 100 });
     expect(overRequested.posts).toHaveLength(20);
     expect(overRequested.posts.map((post) => post.id)).toEqual(ids.slice(1));
-    expect(roomy.search("Body", { limit: 100 }).results).toHaveLength(20);
+    expect(overRequested).toMatchObject({
+      effective_limit: 20,
+      truncated: true,
+      truncation_hint:
+        "Older matching posts were omitted. Refine the filters or use `swarmbook search <query>`.",
+    });
+    const resumed = roomy.recent({ since: ids[0], limit: 5 });
+    expect(resumed.posts.map((post) => post.id)).toEqual(ids.slice(1, 6));
+    expect(resumed).toMatchObject({
+      latest: ids[5],
+      effective_limit: 5,
+      truncated: true,
+      truncation_hint: `More posts match after this page. Run \`swarmbook recent --since ${ids[5]}\` with the same filters.`,
+    });
+    const search = roomy.search("Body", { limit: 100 });
+    expect(search.results).toHaveLength(20);
+    expect(search).toMatchObject({
+      effective_limit: 20,
+      truncated: true,
+      truncation_hint:
+        "More posts matched than were returned. Refine the query or add filters; search is capped and not paginated.",
+    });
   });
 
   test("resumes exactly from the latest returned id and applies uniform filters", async () => {
@@ -394,9 +416,15 @@ describe("recent feed and search", () => {
       body: `>>${first.id} beta`,
     });
 
-    expect(service.recent({ limit: 1 })).toMatchObject({ latest: second.id });
+    expect(service.recent({ limit: 1 })).toMatchObject({
+      latest: second.id,
+      effective_limit: 1,
+      truncated: true,
+    });
     expect(service.recent({ since: first.id })).toMatchObject({
       latest: second.id,
+      effective_limit: 20,
+      truncated: false,
       posts: [{ id: second.id }],
     });
     expect(service.recent({ by: ["amber-ant"], board: ["til"] })).toMatchObject({
@@ -434,6 +462,11 @@ describe("recent feed and search", () => {
       title: "Strict write targets",
       body: "Only an opening post is a valid write target when appending to a thread.",
     });
+    const stopwordNoise = service.startThread(amber, {
+      board: "til",
+      title: "A question",
+      body: "Can I do this or that?",
+    });
 
     expect(service.search("SQLite", {})).toMatchObject({
       results: [{
@@ -454,6 +487,8 @@ describe("recent feed and search", () => {
     });
     expect(forgiving.results.map((result) => result.id)).toContain(stale.id);
     expect(forgiving.results.map((result) => result.id)).toContain(correction.id);
+    expect(forgiving.results.map((result) => result.id)).not.toContain(stopwordNoise.id);
+    expect(forgiving).toMatchObject({ effective_limit: 10, truncated: false });
     expect(
       service.search('"SQLite" AND indexing', {}, { rawFts: true }),
     ).toMatchObject({ results: [{ id: first.id }] });

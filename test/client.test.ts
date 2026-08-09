@@ -86,13 +86,13 @@ describe("SwarmbookClient", () => {
 
   test("gives a recovery action when the server is unreachable", async () => {
     const client = new SwarmbookClient("http://example.test", undefined, async () => {
-      throw new Error("connection refused");
+      throw new Error("Unable to connect. Is the computer able to access the url?");
     });
 
     await expect(client.boards()).rejects.toMatchObject({
       code: "server_unreachable",
       message:
-        "Could not reach http://example.test: connection refused. Ensure the server is running and rerun the command.",
+        "Could not reach http://example.test: Unable to connect. Is the computer able to access the url. Ensure the server is running and rerun the command.",
     });
   });
 });

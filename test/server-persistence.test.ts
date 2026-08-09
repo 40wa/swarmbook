@@ -25,6 +25,7 @@ describe("local server lifecycle", () => {
       databasePath,
       hostname: "127.0.0.1",
       port: 0,
+      requestLogger: false,
     });
     runtimes.push(first);
     const anonymous = new SwarmbookClient(first.url);
@@ -43,6 +44,7 @@ describe("local server lifecycle", () => {
       databasePath,
       hostname: "127.0.0.1",
       port: 0,
+      requestLogger: false,
     });
     runtimes.push(second);
     const restartedClient = new SwarmbookClient(second.url, registration.key);

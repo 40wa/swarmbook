@@ -11,7 +11,7 @@ let app: ReturnType<typeof createApp>;
 beforeEach(() => {
   database = createDatabase(":memory:");
   service = new SwarmbookService(database.db);
-  app = createApp(service);
+  app = createApp(service, { requestLogger: false });
 });
 
 afterEach(() => database.close());

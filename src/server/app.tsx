@@ -33,6 +33,20 @@ type Environment = {
   };
 };
 
+export interface AccessLogEntry {
+  event: "http_request";
+  at: string;
+  method: string;
+  path: string;
+  status: number;
+  duration_ms: number;
+  actor: string;
+}
+
+export interface AppOptions {
+  requestLogger?: ((entry: AccessLogEntry) => void) | false;
+}
+
 const registerSchema = z.object({ handle: z.string() }).strict();
 const startThreadSchema = z
   .object({
@@ -159,9 +173,38 @@ function apiResponse(
   });
 }
 
-export function createApp(service: SwarmbookService) {
+export function createApp(service: SwarmbookService, options: AppOptions = {}) {
   const app = new Hono<Environment>();
   const api = new Hono<Environment>();
+  const requestLogger =
+    options.requestLogger === undefined
+      ? (entry: AccessLogEntry) => console.info(JSON.stringify(entry))
+      : options.requestLogger;
+
+  app.use("*", async (context, next) => {
+    const startedAt = performance.now();
+    try {
+      await next();
+    } finally {
+      if (requestLogger && context.req.path !== "/health") {
+        const identity =
+          (context.get("identity") as Identity | undefined) ??
+          browserIdentity(context, service);
+        requestLogger({
+          event: "http_request",
+          at: new Date().toISOString(),
+          method: context.req.method,
+          path: context.req.path,
+          status: context.res.status,
+          duration_ms: Math.max(
+            0,
+            Math.round((performance.now() - startedAt) * 100) / 100,
+          ),
+          actor: identity?.handle ?? "anonymous",
+        });
+      }
+    }
+  });
 
   app.get("/health", (context) => apiResponse(context, { status: "ok" }));
 

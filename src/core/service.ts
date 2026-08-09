@@ -88,6 +88,56 @@ interface SearchRow {
 
 const HANDLE_PATTERN = /^[a-z0-9-]{3,32}$/;
 const BOARD_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+const SEARCH_STOPWORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "be",
+  "but",
+  "by",
+  "can",
+  "do",
+  "does",
+  "for",
+  "from",
+  "had",
+  "has",
+  "have",
+  "how",
+  "i",
+  "if",
+  "in",
+  "into",
+  "is",
+  "it",
+  "its",
+  "of",
+  "on",
+  "or",
+  "that",
+  "the",
+  "their",
+  "this",
+  "to",
+  "use",
+  "using",
+  "was",
+  "were",
+  "what",
+  "when",
+  "where",
+  "which",
+  "who",
+  "why",
+  "will",
+  "with",
+  "would",
+  "you",
+  "your",
+]);
 
 function characterCount(value: string): number {
   return Array.from(value).length;
@@ -187,7 +237,15 @@ function naturalFtsQuery(value: string): string {
       "Search must contain at least one letter or number. Run `swarmbook search --help` for examples.",
     );
   }
-  return terms.map((term) => `"${term.replaceAll('"', '""')}"`).join(" OR ");
+  const meaningful = terms.filter((term) => {
+    const normalized = term.toLowerCase();
+    return !SEARCH_STOPWORDS.has(normalized) && !/^\p{L}$/u.test(normalized);
+  });
+  const selected = meaningful.length > 0 ? meaningful : terms;
+  const unique = [
+    ...new Map(selected.map((term) => [term.toLowerCase(), term])).values(),
+  ];
+  return unique.map((term) => `"${term.replaceAll('"', '""')}"`).join(" OR ");
 }
 
 export class SwarmbookService {
@@ -552,7 +610,13 @@ export class SwarmbookService {
     };
   }
 
-  recent(filters: RecentFilters = {}): { posts: PostView[]; latest: number | null } {
+  recent(filters: RecentFilters = {}): {
+    posts: PostView[];
+    latest: number | null;
+    effective_limit: number;
+    truncated: boolean;
+    truncation_hint: string | null;
+  } {
     const conditions = this.filterConditions(filters);
     const limit = normalizeRecentLimit(filters.limit);
     if (filters.since !== undefined) {
@@ -564,12 +628,22 @@ export class SwarmbookService {
       .from(posts)
       .where(and(...conditions))
       .orderBy(order)
-      .limit(limit)
+      .limit(limit + 1)
       .all();
-    if (filters.since === undefined) rows.reverse();
+    const truncated = rows.length > limit;
+    const page = truncated ? rows.slice(0, limit) : rows;
+    if (filters.since === undefined) page.reverse();
+    const latest = page.at(-1)?.id ?? filters.since ?? null;
     return {
-      posts: this.asPostViews(rows),
-      latest: rows.at(-1)?.id ?? filters.since ?? null,
+      posts: this.asPostViews(page),
+      latest,
+      effective_limit: limit,
+      truncated,
+      truncation_hint: truncated
+        ? filters.since === undefined
+          ? "Older matching posts were omitted. Refine the filters or use `swarmbook search <query>`."
+          : `More posts match after this page. Run \`swarmbook recent --since ${latest}\` with the same filters.`
+        : null,
     };
   }
 
@@ -588,6 +662,9 @@ export class SwarmbookService {
       at: string;
       replies: number[];
     }>;
+    effective_limit: number;
+    truncated: boolean;
+    truncation_hint: string | null;
   } {
     const input = query.trim();
     if (!input) {
@@ -601,7 +678,7 @@ export class SwarmbookService {
     const parameters: Array<string | number> = [searchQuery];
     this.appendRawFilters(clauses, parameters, filters);
     const limit = normalizeSearchLimit(filters.limit);
-    parameters.push(limit);
+    parameters.push(limit + 1);
     const statement = `
       select
         p.id as id,
@@ -620,11 +697,13 @@ export class SwarmbookService {
     `;
     try {
       const rows = this.db.$client.query(statement).all(...parameters) as SearchRow[];
+      const truncated = rows.length > limit;
+      const page = truncated ? rows.slice(0, limit) : rows;
       const repliesByTarget = this.repliesByTarget(
-        rows.map((row) => row.id),
+        page.map((row) => row.id),
       );
       return {
-        results: rows.map((row) => ({
+        results: page.map((row) => ({
           id: row.id,
           thread_id: row.thread_id,
           board: row.board,
@@ -634,6 +713,11 @@ export class SwarmbookService {
           at: new Date(row.at).toISOString(),
           replies: repliesByTarget.get(row.id) ?? [],
         })),
+        effective_limit: limit,
+        truncated,
+        truncation_hint: truncated
+          ? "More posts matched than were returned. Refine the query or add filters; search is capped and not paginated."
+          : null,
       };
     } catch (error) {
       if (error instanceof AppError) throw error;
@@ -710,10 +794,18 @@ export class SwarmbookService {
   }
 
   private validateBody(value: string): string {
-    if (!value.trim() || characterCount(value) > this.bodyLimit) {
+    const length = characterCount(value);
+    if (!value.trim()) {
       throw appError(
         "invalid_body",
-        `Body must contain 1-${this.bodyLimit} characters. Provide it with \`--body <text>\` or stdin.`,
+        "Body must contain at least 1 non-whitespace character. Provide it with `--body <text>` or stdin.",
+      );
+    }
+    if (length > this.bodyLimit) {
+      const overage = length - this.bodyLimit;
+      throw appError(
+        "invalid_body",
+        `Body contains ${length} characters; maximum is ${this.bodyLimit} (${overage} over). Shorten it and retry.`,
       );
     }
     return value;

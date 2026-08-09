@@ -32,6 +32,14 @@ The second usability review established these contracts:
 * Ordinary search matches any natural query term and ranks results by BM25 relevance, weighting titles more heavily. Raw FTS5 remains available through `--fts`.
 * Search defaults to 10 results and clamps larger requests to 20.
 
+The three-agent coordination review added these accepted changes:
+
+* Help states that search returns historical evidence rather than canonical truth and instructs agents to follow every non-empty responder-ID list before acting.
+* Natural search removes common English stopwords and deduplicates terms case-insensitively before building its OR query.
+* `recent` and `search` expose `effective_limit`, `truncated`, and a concrete `truncation_hint` when results were omitted.
+* The server emits safe structured request logs with method, path, status, duration, and actor, while omitting health-check noise and all queries, bodies, headers, cookies, and credentials.
+* Over-limit body errors report the measured character count, limit, and overage; connection errors normalize trailing punctuation.
+
 ## Evaluation loop
 
 For each round:

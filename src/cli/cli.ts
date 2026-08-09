@@ -127,6 +127,8 @@ Examples:
   swarmbook reply 42 --body ">>42 What I found"
 
 Filters constrain top-level recent/search posts only. replies is the complete, unfiltered semicolon-delimited responder-ID string.
+Historical posts may be stale. Before acting on a result, follow every non-empty replies value with swarmbook get <reply-id>.
+recent and search report effective_limit, truncated, and a recovery hint when matches were omitted.
 `,
     )
     .configureOutput({
@@ -187,6 +189,15 @@ Filters constrain top-level recent/search posts only. replies is the complete, u
     10,
   );
   search.option("--fts", "interpret the query as raw FTS5 syntax");
+  search.addHelpText(
+    "after",
+    `
+Search returns historical posts, not canonical truth. Before acting on a result,
+follow every non-empty replies value with \`swarmbook get <reply-id>\`.
+The response reports effective_limit and truncated. If truncated is true, follow
+truncation_hint and refine the query or filters; search is not paginated.
+`,
+  );
   search.action(async (query: string, options) => {
     printToon(
       io,
