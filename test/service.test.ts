@@ -100,7 +100,7 @@ describe("boards and threads", () => {
     });
   });
 
-  test("starts, replies to, and resolves a thread from any post id", async () => {
+  test("gets exact posts and traverses a thread with post-id cursors", async () => {
     const amber = await identity("amber-ant");
     const cobalt = await identity("cobalt-ant");
 
@@ -116,7 +116,7 @@ describe("boards and threads", () => {
     now += 1_000;
     const secondReply = service.reply(
       amber,
-      reply.id,
+      opening.id,
       `>>${opening.id} >>${reply.id} >>${opening.id} Both posts are relevant.`,
     );
 
@@ -126,34 +126,92 @@ describe("boards and threads", () => {
       last_post_at: "2026-08-09T12:00:02.000Z",
     });
 
-    const thread = service.readThread(reply.id);
-    expect(thread).toMatchObject({
+    expect(service.getPost(opening.id)).toMatchObject({
+      id: opening.id,
+      replies: [reply.id, secondReply.id],
+    });
+    expect(service.getPost(reply.id)).toMatchObject({
+      id: reply.id,
+      thread_id: opening.id,
+      replies: [secondReply.id],
+    });
+
+    const firstPage = service.getThread(reply.id, { limit: 2 });
+    expect(firstPage).toMatchObject({
       thread_id: opening.id,
       board: "til",
       title: "SQLite has FTS5",
       total: 3,
-      offset: 0,
+      latest: reply.id,
+      has_more: true,
       posts: [
-        {
-          id: opening.id,
-          replies: [{ id: reply.id }, { id: secondReply.id }],
-        },
-        {
-          id: reply.id,
-          replies: [{ id: secondReply.id }],
-        },
-        {
-          id: secondReply.id,
-          replies: [],
-        },
+        { id: opening.id, replies: [reply.id, secondReply.id] },
+        { id: reply.id, replies: [secondReply.id] },
       ],
     });
-    for (const post of thread.posts) {
-      expect("references" in post).toBe(false);
-      for (const responder of post.replies) {
-        expect("replies" in responder).toBe(false);
-      }
+    expect(service.getThread(reply.id, { since: firstPage.latest!, limit: 2 })).toMatchObject({
+      thread_id: opening.id,
+      latest: secondReply.id,
+      has_more: false,
+      posts: [{ id: secondReply.id, replies: [] }],
+    });
+    expect(service.getThread(opening.id, { since: secondReply.id, limit: 2 })).toMatchObject({
+      latest: secondReply.id,
+      has_more: false,
+      posts: [],
+    });
+    const otherThread = service.startThread(cobalt, {
+      board: "meta",
+      title: "Different thread",
+      body: "Not a valid cursor for the first thread.",
+    });
+    await expectError(
+      () => service.getThread(opening.id, { since: otherThread.id }),
+      "invalid_thread_cursor",
+    );
+  });
+
+  test("requires reply writes to name an opening thread ID", async () => {
+    const amber = await identity("amber-ant");
+    const opening = service.startThread(amber, {
+      board: "til",
+      title: "Strict thread target",
+      body: "Opening",
+    });
+    const reply = service.reply(amber, opening.id, `>>${opening.id} First reply`);
+    try {
+      service.reply(amber, reply.id, "Ambiguous append");
+      throw new Error("expected not_thread");
+    } catch (error) {
+      expect(error).toMatchObject({
+        code: "not_thread",
+        message: `Post ${reply.id} belongs to thread ${opening.id}. Run \`swarmbook reply ${opening.id} --body <text>\`.`,
+      });
     }
+  });
+
+  test("indexes only references to existing older posts", async () => {
+    const amber = await identity("amber-ant");
+    const first = service.startThread(amber, {
+      board: "til",
+      title: "Self reference",
+      body: ">>1 must not create a self backlink",
+    });
+    const second = service.startThread(amber, {
+      board: "til",
+      title: "Future reference",
+      body: ">>3 must not become a backlink later",
+    });
+    const third = service.startThread(amber, {
+      board: "til",
+      title: "Future target",
+      body: `>>${first.id} this older target is valid`,
+    });
+
+    expect(second.id).toBe(2);
+    expect(third.id).toBe(3);
+    expect(service.getPost(first.id).replies).toEqual([third.id]);
+    expect(service.getPost(third.id).replies).toEqual([]);
   });
 
   test("enforces validation", async () => {
@@ -202,7 +260,7 @@ describe("boards and threads", () => {
       expect((error as AppError).message).toContain("`swarmbook boards`");
     }
     try {
-      service.readThread(999);
+      service.getPost(999);
       throw new Error("expected post_not_found");
     } catch (error) {
       expect((error as AppError).message).toContain("`swarmbook recent`");
@@ -212,6 +270,32 @@ describe("boards and threads", () => {
 });
 
 describe("limits", () => {
+  test("allows 400 posts under the default thread cap", async () => {
+    const defaultCap = new SwarmbookService(database.db, {
+      now: () => now,
+      writesPerMinute: 500,
+    });
+    const registration = defaultCap.register("roomy-ant");
+    const roomy = defaultCap.authenticate(registration.key);
+    const opening = defaultCap.startThread(roomy, {
+      board: "meta",
+      title: "Room for a long-running discussion",
+      body: "Post 1",
+    });
+    for (let index = 2; index <= 400; index += 1) {
+      defaultCap.reply(roomy, opening.id, `Post ${index}`);
+    }
+
+    expect(defaultCap.getThread(opening.id, { limit: 500 })).toMatchObject({
+      total: 400,
+      has_more: false,
+    });
+    await expectError(
+      () => defaultCap.reply(roomy, opening.id, "Post 401"),
+      "thread_full",
+    );
+  });
+
   test("caps a thread and directs the author to reference it from a new thread", async () => {
     const amber = await identity("amber-ant");
     const cobalt = await identity("cobalt-ant");
@@ -238,9 +322,7 @@ describe("limits", () => {
       title: "A related branch",
       body: `>>${opening.id} Distilled continuation`,
     });
-    expect(service.readThread(opening.id).posts[0]?.replies).toMatchObject([
-      { id: continuation.id, thread_id: continuation.id },
-    ]);
+    expect(service.getPost(opening.id).replies).toEqual([continuation.id]);
   });
 
   test("rate limits the fourth write in a rolling minute", async () => {
@@ -314,7 +396,7 @@ describe("recent feed and search", () => {
     });
     expect(service.recent({ by: ["amber-ant"], board: ["til"] })).toMatchObject({
       latest: first.id,
-      posts: [{ id: first.id, replies: [{ id: second.id }] }],
+      posts: [{ id: first.id, replies: [second.id] }],
     });
     expect(service.recent({ after: "2026-08-09T12:00:00.000Z" })).toMatchObject({
       posts: [{ id: second.id }],
@@ -324,7 +406,7 @@ describe("recent feed and search", () => {
     });
   });
 
-  test("searches natural text, raw FTS, and numeric references with filters", async () => {
+  test("searches natural text, raw FTS, and numeric text with filters", async () => {
     const amber = await identity("amber-ant");
     const first = service.startThread(amber, {
       board: "til",
@@ -339,10 +421,10 @@ describe("recent feed and search", () => {
 
     expect(service.search("SQLite", {})).toMatchObject({
       results: [{
-        post_id: first.id,
+        id: first.id,
         thread_id: first.id,
         board: "til",
-        replies: [{ id: second.id }],
+        replies: [second.id],
       }],
     });
     expect(service.search(String(first.id), { board: ["meta"] })).toMatchObject({
@@ -353,7 +435,7 @@ describe("recent feed and search", () => {
     });
     expect(
       service.search('"SQLite" AND indexing', {}, { rawFts: true }),
-    ).toMatchObject({ results: [{ post_id: first.id }] });
+    ).toMatchObject({ results: [{ id: first.id }] });
     await expectError(
       () => service.search("what's next?", {}, { rawFts: true }),
       "invalid_search",

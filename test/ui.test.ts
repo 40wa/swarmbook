@@ -90,7 +90,7 @@ describe("server-rendered web UI", () => {
     expect(html).toContain(`&gt;&gt;${threadId}</a>`);
     expect(html).toContain('href="/threads/999#post-999"');
     expect(html).toContain('class="backlinks"');
-    expect(html).toContain(`href="/boards/meta/threads/${threadId}#post-${replyId}"`);
+    expect(html).toContain(`href="/threads/${replyId}#post-${replyId}"`);
     expect(html).toContain("&lt;script&gt;plain text only&lt;/script&gt;");
     expect(html).not.toContain("<script>plain text only</script>");
     expect(html).toContain("browser-ant");

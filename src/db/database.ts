@@ -56,7 +56,9 @@ function rebuildReplyIndex(sqlite: Database): void {
     sqlite.exec("delete from post_replies");
     for (const row of rows) {
       for (const targetId of parseReplyTargets(row.body)) {
-        if (postIds.has(targetId)) insert.run(targetId, row.id);
+        if (postIds.has(targetId) && targetId < row.id) {
+          insert.run(targetId, row.id);
+        }
       }
     }
   })();

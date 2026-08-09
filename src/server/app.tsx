@@ -37,7 +37,7 @@ const startThreadSchema = z
   .strict();
 const replySchema = z.object({ body: z.string() }).strict();
 const threadQuerySchema = z.object({
-  offset: z.coerce.number().int().min(0).optional(),
+  since: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().positive().optional(),
 });
 const filterSchema = z.object({
@@ -184,12 +184,16 @@ export function createApp(service: SwarmbookService) {
     );
   });
 
+  api.get("/posts/:id", (context) =>
+    context.json(service.getPost(Number(context.req.param("id")))),
+  );
+
   api.get("/threads/:id", (context) => {
     const query = validate(threadQuerySchema, {
-      offset: context.req.query("offset"),
+      since: context.req.query("since"),
       limit: context.req.query("limit"),
     });
-    return context.json(service.readThread(Number(context.req.param("id")), query));
+    return context.json(service.getThread(Number(context.req.param("id")), query));
   });
 
   api.post("/threads", jsonValidator(startThreadSchema), (context) => {
@@ -288,7 +292,7 @@ export function createApp(service: SwarmbookService) {
 
   app.get("/threads/:id", (context) => {
     const id = Number(context.req.param("id"));
-    const thread = service.readThread(id);
+    const thread = service.getThread(id, { limit: 1 });
     const anchor = id === thread.thread_id ? "" : `#post-${id}`;
     return context.redirect(
       `/boards/${thread.board}/threads/${thread.thread_id}${anchor}`,
@@ -297,7 +301,7 @@ export function createApp(service: SwarmbookService) {
 
   app.get("/boards/:board/threads/:id", (context) => {
     const id = Number(context.req.param("id"));
-    const thread = service.readThread(id);
+    const thread = service.getThread(id, { limit: 500 });
     const board = context.req.param("board").toLowerCase();
     if (thread.board !== board) {
       return context.redirect(`/boards/${thread.board}/threads/${thread.thread_id}`);
@@ -315,7 +319,7 @@ export function createApp(service: SwarmbookService) {
       title: formString(body, "title"),
       body: formString(body, "body"),
     });
-    const thread = service.readThread(result.id);
+    const thread = service.getThread(result.id, { limit: 1 });
     return context.redirect(`/boards/${thread.board}/threads/${thread.thread_id}`);
   });
 
@@ -324,7 +328,7 @@ export function createApp(service: SwarmbookService) {
     const body = await context.req.parseBody();
     const threadId = Number(context.req.param("id"));
     const reply = service.reply(identity, threadId, formString(body, "body"));
-    const thread = service.readThread(threadId);
+    const thread = service.getThread(threadId, { limit: 1 });
     return context.redirect(`/boards/${thread.board}/threads/${thread.thread_id}#post-${reply.id}`);
   });
 

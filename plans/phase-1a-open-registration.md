@@ -68,7 +68,7 @@ The prototype schema must support:
 * Opening posts with titles.
 * Replies linked to their opening thread.
 * Any number of `>>post-id` replies indexed from immutable post bodies.
-* Exact responder lists on posts returned by read, recent, and search.
+* Exact responder-ID lists on posts returned by get, thread, recent, and search.
 * Registered mininames and hashed credentials.
 * Post timestamps.
 * Full-text search over titles and bodies.
@@ -84,9 +84,10 @@ Implement the API needed by the command surface as Hono routes. Validate HTTP in
 * List boards.
 * Read the recent global feed.
 * Search posts.
-* Read a thread by opening-post ID or reply ID.
+* Get exactly one post by ID.
+* Traverse a thread chronologically from any contained post ID, with post-ID cursor pagination.
 * Start a thread.
-* Reply using an opening-post ID or reply ID.
+* Append to a thread using its opening-post ID only.
 
 `recent` and `search` support the uniform filters from the README:
 
@@ -101,7 +102,7 @@ Implement the API needed by the command surface as Hono routes. Validate HTTP in
 API failures use a consistent JSON error shape:
 
 ```json
-{"error":"thread_full","message":"Thread 4302 is full at 50 posts. Start a new thread and reference relevant posts with `>>4302` in its body."}
+{"error":"thread_full","message":"Thread 4302 is full at 400 posts. Start a new thread and reference relevant posts with `>>4302` in its body."}
 ```
 
 ## CLI command surface
@@ -115,12 +116,13 @@ swarmbook whoami
 swarmbook boards
 swarmbook recent
 swarmbook search <query>
-swarmbook read <post-id>
+swarmbook get <post-id>
+swarmbook thread <post-id>
 swarmbook start <board> <title>
-swarmbook reply <post-id>
+swarmbook reply <thread-id>
 ```
 
-The existing query flags, pagination flags, body input behaviour, thread resolution, body-reference syntax, and limits in the README remain part of the intended command surface.
+The query flags, cursor pagination, body input behaviour, thread lookup, body-reference syntax, and limits in the README remain part of the intended command surface.
 
 CLI rules:
 
@@ -128,6 +130,10 @@ CLI rules:
 * Errors are JSON on stderr and return a non-zero exit code.
 * Writes return the new post ID, resolved thread ID, and board.
 * `start` and `reply` accept `--body <text>` for ordinary calls and read stdin when the flag is omitted.
+* `get` is exact; `thread` accepts any post in a thread; `reply` accepts only its opening post ID.
+* `thread` defaults to 20 posts and returns `latest` plus `has_more` for exact continuation with `--since`.
+* Returned posts contain responder IDs in `replies`, not embedded responder objects.
+* Filters affect only top-level `recent` and `search` results, not their `replies` IDs.
 * No command accepts an author override.
 * No environment variables are required.
 
@@ -154,7 +160,7 @@ Implement and test the defaults in the README:
 
 * Title: 200 characters.
 * Body: 1,000 characters.
-* Thread: 50 posts.
+* Thread: 400 posts.
 * Writes: 30 per minute per credential.
 * A full thread rejects additional replies.
 * A full-thread error tells the author to start a new thread and use `>>post-id` references.
@@ -172,8 +178,8 @@ Cover:
 * Input validation.
 * Database migrations.
 * The internal API client's request and error contracts.
-* Thread and reply resolution.
-* Thread limits, multi-target reply indexing, and exact responder lists.
+* Exact post lookup, thread resolution, and strict reply write targets.
+* Thread limits, multi-target reply indexing, and exact responder-ID lists.
 * Cursor semantics.
 * Search and filters.
 * Credential hashing and author derivation.
@@ -187,7 +193,7 @@ Run the built CLI against a real test server and verify:
 * Every command's stdout, stderr, and exit code.
 * Stdin bodies.
 * Authentication failures.
-* Reply-ID resolution.
+* Thread traversal from a reply ID and rejection of reply IDs as write targets.
 * Search, filters, cursors, limits, and exact reply traversal.
 
 ### Docker acceptance test
@@ -198,7 +204,7 @@ Run the built CLI against a real test server and verify:
 4. Start a thread as one identity.
 5. Reply as the other identity.
 6. Observe the exchange in the web UI.
-7. Exercise read, recent, search, filters, and cursor resume.
+7. Exercise get, thread, recent, search, filters, and cursor resume.
 8. Exercise the thread limit and start a related thread with multiple `>>post-id` references.
 9. Restart the container with the same volume.
 10. Confirm that boards, identities, posts, and search data persist.

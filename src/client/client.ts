@@ -88,12 +88,16 @@ export class SwarmbookClient {
     return this.request(`/api/search?${search}`);
   }
 
-  read(
+  get(postId: number): Promise<Record<string, unknown>> {
+    return this.request(`/api/posts/${postId}`);
+  }
+
+  thread(
     postId: number,
-    options: { offset?: number; limit?: number } = {},
+    options: { since?: number; limit?: number } = {},
   ): Promise<Record<string, unknown>> {
     const search = new URLSearchParams();
-    if (options.offset !== undefined) search.set("offset", String(options.offset));
+    if (options.since !== undefined) search.set("since", String(options.since));
     if (options.limit !== undefined) search.set("limit", String(options.limit));
     return this.request(`/api/threads/${postId}${search.size ? `?${search}` : ""}`);
   }

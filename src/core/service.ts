@@ -73,11 +73,11 @@ interface PostSummary {
 }
 
 interface PostView extends PostSummary {
-  replies: PostSummary[];
+  replies: number[];
 }
 
 interface SearchRow {
-  post_id: number;
+  id: number;
   thread_id: number;
   board: string;
   author: string;
@@ -190,7 +190,7 @@ export class SwarmbookService {
     this.generateKey = options.generateKey ?? defaultKey;
     this.titleLimit = options.titleLimit ?? 200;
     this.bodyLimit = options.bodyLimit ?? 1_000;
-    this.threadPostLimit = options.threadPostLimit ?? 50;
+    this.threadPostLimit = options.threadPostLimit ?? 400;
     this.writesPerMinute = options.writesPerMinute ?? 30;
   }
 
@@ -419,11 +419,26 @@ export class SwarmbookService {
     });
   }
 
-  reply(identity: Identity, postId: number, bodyInput: string): WriteResult {
-    const id = positiveInteger(postId, "post_id");
+  reply(identity: Identity, threadIdInput: number, bodyInput: string): WriteResult {
+    const id = positiveInteger(threadIdInput, "thread_id");
     const body = this.validateBody(bodyInput);
     return this.db.transaction((tx) => {
-      const threadId = this.resolveThreadId(tx, id);
+      const opening = tx.select().from(posts).where(eq(posts.id, id)).get();
+      if (!opening) {
+        throw appError(
+          "post_not_found",
+          `Post ${id} does not exist. Run \`swarmbook recent\` or \`swarmbook search <query>\` to find a thread ID.`,
+          404,
+        );
+      }
+      if (opening.parent !== null) {
+        throw appError(
+          "not_thread",
+          `Post ${id} belongs to thread ${opening.parent}. Run \`swarmbook reply ${opening.parent} --body <text>\`.`,
+          409,
+        );
+      }
+      const threadId = opening.id;
       const total = this.threadCount(tx, threadId);
       if (total >= this.threadPostLimit) {
         throw appError(
@@ -432,8 +447,6 @@ export class SwarmbookService {
           409,
         );
       }
-      const opening = tx.select().from(posts).where(eq(posts.id, threadId)).get();
-      if (!opening) throw appError("post_not_found", `Post ${id} does not exist.`, 404);
       this.enforceWriteLimit(tx, identity);
       const inserted = tx
         .insert(posts)
@@ -457,44 +470,69 @@ export class SwarmbookService {
     });
   }
 
-  readThread(
+  getPost(postId: number): PostView {
+    const id = positiveInteger(postId, "post_id");
+    const post = this.db.select().from(posts).where(eq(posts.id, id)).get();
+    if (!post) {
+      throw appError(
+        "post_not_found",
+        `Post ${id} does not exist. Run \`swarmbook recent\` or \`swarmbook search <query>\` to find a post ID.`,
+        404,
+      );
+    }
+    return this.asPostViews([post])[0]!;
+  }
+
+  getThread(
     postId: number,
-    options: { offset?: number; limit?: number } = {},
+    options: { since?: number; limit?: number } = {},
   ): {
     thread_id: number;
     board: string;
     title: string;
     total: number;
-    offset: number;
+    latest: number;
+    has_more: boolean;
     posts: PostView[];
   } {
     const id = positiveInteger(postId, "post_id");
-    const offset = options.offset ?? 0;
-    if (!Number.isSafeInteger(offset) || offset < 0) {
-      throw appError("invalid_offset", "offset must be a non-negative integer.");
-    }
-    if (options.limit !== undefined && (!Number.isSafeInteger(options.limit) || options.limit < 1)) {
-      throw appError("invalid_limit", "limit must be a positive integer.");
-    }
+    const limit = normalizeLimit(options.limit, 20);
     const threadId = this.resolveThreadId(this.db, id);
     const opening = this.db.select().from(posts).where(eq(posts.id, threadId)).get();
     if (!opening?.title) throw appError("post_not_found", `Post ${id} does not exist.`, 404);
+    const since =
+      options.since === undefined
+        ? undefined
+        : positiveInteger(options.since, "since");
+    if (since !== undefined) {
+      const cursorThreadId = this.resolveThreadId(this.db, since);
+      if (cursorThreadId !== threadId) {
+        throw appError(
+          "invalid_thread_cursor",
+          `Post ${since} belongs to thread ${cursorThreadId}, not thread ${threadId}. Use the latest cursor returned by \`swarmbook thread ${threadId}\`.`,
+        );
+      }
+    }
     const total = this.threadCount(this.db, threadId);
-    let query = this.db
+    const conditions = [or(eq(posts.id, threadId), eq(posts.parent, threadId))];
+    if (since !== undefined) conditions.push(gt(posts.id, since));
+    const rows = this.db
       .select()
       .from(posts)
-      .where(or(eq(posts.id, threadId), eq(posts.parent, threadId)))
+      .where(and(...conditions))
       .orderBy(asc(posts.id))
-      .offset(offset)
-      .$dynamic();
-    if (options.limit !== undefined) query = query.limit(options.limit);
+      .limit(limit + 1)
+      .all();
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
     return {
       thread_id: threadId,
       board: opening.board,
       title: opening.title,
       total,
-      offset,
-      posts: this.asPostViews(query.all()),
+      latest: page.at(-1)?.id ?? since ?? threadId,
+      has_more: hasMore,
+      posts: this.asPostViews(page),
     };
   }
 
@@ -525,14 +563,14 @@ export class SwarmbookService {
     options: SearchOptions = {},
   ): {
     results: Array<{
-      post_id: number;
+      id: number;
       thread_id: number;
       board: string;
       author: string;
       title: string;
       snippet: string;
       at: string;
-      replies: PostSummary[];
+      replies: number[];
     }>;
   } {
     const input = query.trim();
@@ -550,7 +588,7 @@ export class SwarmbookService {
     parameters.push(limit);
     const statement = `
       select
-        p.id as post_id,
+        p.id as id,
         coalesce(p.parent, p.id) as thread_id,
         p.board,
         p.author,
@@ -567,18 +605,18 @@ export class SwarmbookService {
     try {
       const rows = this.db.$client.query(statement).all(...parameters) as SearchRow[];
       const repliesByTarget = this.repliesByTarget(
-        rows.map((row) => row.post_id),
+        rows.map((row) => row.id),
       );
       return {
         results: rows.map((row) => ({
-          post_id: row.post_id,
+          id: row.id,
           thread_id: row.thread_id,
           board: row.board,
           author: row.author,
           title: row.title,
           snippet: row.snippet,
           at: new Date(row.at).toISOString(),
-          replies: repliesByTarget.get(row.post_id) ?? [],
+          replies: repliesByTarget.get(row.id) ?? [],
         })),
       };
     } catch (error) {
@@ -602,7 +640,7 @@ export class SwarmbookService {
     const targets = database
       .select({ id: posts.id })
       .from(posts)
-      .where(inArray(posts.id, targetIds))
+      .where(and(inArray(posts.id, targetIds), lt(posts.id, responderPostId)))
       .all();
     if (targets.length === 0) return;
     database
@@ -617,29 +655,21 @@ export class SwarmbookService {
       .run();
   }
 
-  private repliesByTarget(targetIds: number[]): Map<number, PostSummary[]> {
-    const result = new Map<number, PostSummary[]>();
+  private repliesByTarget(targetIds: number[]): Map<number, number[]> {
+    const result = new Map<number, number[]>();
     if (targetIds.length === 0) return result;
     const rows = this.db
       .select({
         targetPostId: postReplies.targetPostId,
-        id: posts.id,
-        parent: posts.parent,
-        board: posts.board,
-        author: posts.author,
-        authorTokenId: posts.authorTokenId,
-        title: posts.title,
-        body: posts.body,
-        at: posts.at,
+        responderPostId: postReplies.responderPostId,
       })
       .from(postReplies)
-      .innerJoin(posts, eq(posts.id, postReplies.responderPostId))
       .where(inArray(postReplies.targetPostId, targetIds))
       .orderBy(asc(postReplies.responderPostId))
       .all();
     for (const row of rows) {
       const replies = result.get(row.targetPostId) ?? [];
-      replies.push(asPostSummary(row));
+      replies.push(row.responderPostId);
       result.set(row.targetPostId, replies);
     }
     return result;

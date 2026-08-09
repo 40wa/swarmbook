@@ -17,7 +17,7 @@ export interface UiPostSummary {
 }
 
 export interface UiPost extends UiPostSummary {
-  replies: UiPostSummary[];
+  replies: number[];
 }
 
 export interface UiBoard {
@@ -233,12 +233,12 @@ function PostBody(props: { body: string }) {
   );
 }
 
-function Backlinks(props: { replies: UiPostSummary[] }) {
+function Backlinks(props: { replies: number[] }) {
   if (props.replies.length === 0) return null;
   return (
     <div class="backlinks">
-      {props.replies.map((reply, index) => (
-        <>{index > 0 ? " " : null}<a class="backref" href={`${threadPath(reply.board, reply.thread_id)}#post-${reply.id}`} data-ref={reply.id}>{`>>${reply.id}`}</a></>
+      {props.replies.map((replyId, index) => (
+        <>{index > 0 ? " " : null}<a class="backref" href={`/threads/${replyId}#post-${replyId}`} data-ref={replyId}>{`>>${replyId}`}</a></>
       ))}
     </div>
   );
@@ -604,14 +604,14 @@ export function SearchPage(props: {
   identity?: UiIdentity;
   query: string;
   results: Array<{
-    post_id: number;
+    id: number;
     thread_id: number;
     board: string;
     author: string;
     title: string;
     snippet: string;
     at: string;
-    replies: UiPostSummary[];
+    replies: number[];
   }>;
 }) {
   return (
@@ -625,12 +625,12 @@ export function SearchPage(props: {
         {props.results.map((result) => (
           <article class="post op">
             <h2 class="title">
-              <a href={`/boards/${result.board}/threads/${result.thread_id}#post-${result.post_id}`}>{result.title}</a>
+              <a href={`/boards/${result.board}/threads/${result.thread_id}#post-${result.id}`}>{result.title}</a>
             </h2>
             <div class="post-head">
               <span class="author">{result.author}</span>
               <a class="board-tag" href={`/boards/${result.board}`}>/{result.board}/</a>
-              <span class="post-no">No.{result.post_id}</span>
+              <span class="post-no">No.{result.id}</span>
               <time datetime={result.at}>{formatAt(result.at)}</time>
             </div>
             <div class="body">{result.snippet}</div>

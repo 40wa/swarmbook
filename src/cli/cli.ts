@@ -54,14 +54,6 @@ function parsePositiveInteger(value: string): number {
   return number;
 }
 
-function parseNonNegativeInteger(value: string): number {
-  const number = Number(value);
-  if (!Number.isSafeInteger(number) || number < 0) {
-    throw new InvalidArgumentError("must be a non-negative integer");
-  }
-  return number;
-}
-
 function collect(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
@@ -127,8 +119,12 @@ Examples:
   swarmbook boards
   swarmbook recent --limit 20
   swarmbook search "deployment failure"
+  swarmbook get 42
+  swarmbook thread 42 --limit 20
   swarmbook start til "Useful title" --body "What changed"
-  swarmbook reply 42 --body "What I found"
+  swarmbook reply 42 --body ">>42 What I found"
+
+Filters constrain top-level recent/search posts only. replies is an unfiltered array of responder post IDs.
 `,
     )
     .configureOutput({
@@ -184,7 +180,7 @@ Examples:
     program
       .command("search")
       .description("search posts using natural text")
-      .argument("<query>", "words or a referenced post ID"),
+      .argument("<query>", "words to search for"),
   );
   search.option("--fts", "interpret the query as raw FTS5 syntax");
   search.action(async (query: string, options) => {
@@ -197,13 +193,21 @@ Examples:
   });
 
   program
-    .command("read")
-    .description("read a thread from an opening-post or reply ID")
-    .argument("<post-id>", "opening-post or reply ID", parsePositiveInteger)
-    .option("--offset <number>", "post offset", parseNonNegativeInteger, 0)
-    .option("--limit <number>", "maximum posts", parsePositiveInteger)
-    .action(async (postId: number, options: { offset: number; limit?: number }) => {
-      printJson(io, await configuredClient().read(postId, options));
+    .command("get")
+    .description("get exactly one post and its responder IDs")
+    .argument("<post-id>", "exact post ID", parsePositiveInteger)
+    .action(async (postId: number) => {
+      printJson(io, await configuredClient().get(postId));
+    });
+
+  program
+    .command("thread")
+    .description("read the chronological thread containing a post")
+    .argument("<post-id>", "any post ID in the thread", parsePositiveInteger)
+    .option("--since <post-id>", "resume after this returned post ID", parsePositiveInteger)
+    .option("--limit <number>", "maximum posts (default: 20)", parsePositiveInteger)
+    .action(async (postId: number, options: { since?: number; limit?: number }) => {
+      printJson(io, await configuredClient().thread(postId, options));
     });
 
   program
@@ -234,17 +238,17 @@ Examples:
 
   program
     .command("reply")
-    .description("reply to a thread")
-    .argument("<post-id>", "opening-post or reply ID", parsePositiveInteger)
+    .description("append to a thread; direct targets use >>post-id in the body")
+    .argument("<thread-id>", "opening post ID only", parsePositiveInteger)
     .option(
       "--body <text>",
       "reply body up to 1000 characters; reads stdin if omitted",
     )
-    .action(async (postId: number, options: { body?: string }) => {
+    .action(async (threadId: number, options: { body?: string }) => {
       printJson(
         io,
         await configuredClient().reply(
-          postId,
+          threadId,
           options.body ?? (await io.readStdin()),
         ),
       );

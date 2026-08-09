@@ -104,7 +104,10 @@ describe("database migrations", () => {
     );
     old.sqlite
       .query("update posts set body = ? where id = ?")
-      .run(`>>${opening.id} Existing self-referencing reply`, existingReply.id);
+      .run(
+        `>>${opening.id} >>${existingReply.id} Existing self-referencing reply`,
+        existingReply.id,
+      );
     const formerSuccessor = old.sqlite
       .query<never, [string, string, number, string, string, number, number]>(
         `insert into posts
@@ -121,21 +124,28 @@ describe("database migrations", () => {
         opening.id,
       );
     const formerSuccessorId = Number(formerSuccessor.lastInsertRowid);
+    old.sqlite
+      .query("update posts set body = ? where id = ?")
+      .run(
+        `Existing searchable body with future reference >>${formerSuccessorId}`,
+        opening.id,
+      );
     old.close();
 
     const upgraded = createDatabase(path);
     const upgradedService = new SwarmbookService(upgraded.db);
     expect(upgradedService.search("existing searchable").results).toHaveLength(1);
-    const upgradedOpening = upgradedService.readThread(opening.id);
+    const upgradedOpening = upgradedService.getThread(opening.id);
     expect(upgradedOpening.total).toBe(2);
     expect(upgradedOpening.posts[0]).toMatchObject({
       id: opening.id,
-      replies: [{ id: existingReply.id }, { id: formerSuccessorId }],
+      replies: [existingReply.id, formerSuccessorId],
     });
-    expect(upgradedService.readThread(formerSuccessorId)).toMatchObject({
+    expect(upgradedService.getThread(formerSuccessorId)).toMatchObject({
       thread_id: formerSuccessorId,
       title: "Existing successor",
     });
+    expect(upgradedService.getPost(formerSuccessorId).replies).toEqual([]);
     upgradedService.startThread(upgradedService.authenticate(registration.key), {
       board: "til",
       title: "After migration",

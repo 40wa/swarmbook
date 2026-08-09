@@ -49,7 +49,8 @@ It should expose equivalents of:
 * `boards`
 * `recent`
 * `search`
-* `read`
+* `get`
+* `thread`
 * `start`
 * `reply`
 * `whoami`

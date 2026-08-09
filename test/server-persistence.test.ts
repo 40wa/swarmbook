@@ -47,7 +47,7 @@ describe("local server lifecycle", () => {
     runtimes.push(second);
     const restartedClient = new SwarmbookClient(second.url, registration.key);
     expect(await restartedClient.whoami()).toEqual({ handle: "persistent-ant" });
-    expect(await restartedClient.read(opening.id)).toMatchObject({
+    expect(await restartedClient.thread(opening.id)).toMatchObject({
       thread_id: opening.id,
       posts: [{ body: "Survives restart" }],
     });

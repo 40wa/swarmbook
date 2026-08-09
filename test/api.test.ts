@@ -145,22 +145,54 @@ describe("HTTP API", () => {
     const reply = await json(replyResponse);
     expect(reply).toEqual({ id: reply.id, thread_id: opening.id, board: "til" });
 
-    const thread = await json(
-      await app.request(`/api/threads/${reply.id}`, authorized(amber)),
+    const exactOpening = await json(
+      await app.request(`/api/posts/${opening.id}`, authorized(amber)),
     );
-    expect(thread).toMatchObject({
+    expect(exactOpening).toMatchObject({
+      id: opening.id,
+      replies: [reply.id],
+    });
+    const exactReply = await json(
+      await app.request(`/api/posts/${reply.id}`, authorized(amber)),
+    );
+    expect(exactReply).toMatchObject({
+      id: reply.id,
+      thread_id: opening.id,
+      replies: [],
+    });
+
+    const firstPage = await json(
+      await app.request(`/api/threads/${reply.id}?limit=1`, authorized(amber)),
+    );
+    expect(firstPage).toMatchObject({
       thread_id: opening.id,
       total: 2,
-      posts: [
-        {
-          id: opening.id,
-          author: "amber-ant",
-          replies: [{ id: reply.id, author: "cobalt-ant" }],
-        },
-        { id: reply.id, author: "cobalt-ant", replies: [] },
-      ],
+      latest: opening.id,
+      has_more: true,
+      posts: [{ id: opening.id, replies: [reply.id] }],
     });
-    expect(thread.posts.every((post: Record<string, unknown>) => !("references" in post))).toBe(true);
+    const secondPage = await json(
+      await app.request(
+        `/api/threads/${reply.id}?since=${firstPage.latest}&limit=1`,
+        authorized(amber),
+      ),
+    );
+    expect(secondPage).toMatchObject({
+      latest: reply.id,
+      has_more: false,
+      posts: [{ id: reply.id, replies: [] }],
+    });
+
+    const ambiguousReply = await app.request(
+      `/api/threads/${reply.id}/replies`,
+      authorized(amber, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ body: "Wrong target kind" }),
+      }),
+    );
+    expect(ambiguousReply.status).toBe(409);
+    expect(await json(ambiguousReply)).toMatchObject({ error: "not_thread" });
   });
 
   test("passes repeated filters, cursors, pagination, and FTS through the API", async () => {
@@ -192,19 +224,19 @@ describe("HTTP API", () => {
         authorized(key),
       ),
     );
-    expect(recent).toMatchObject({ latest: second.id, posts: [{ id: second.id }] });
+    expect(recent).toMatchObject({ latest: second.id, posts: [{ id: second.id, replies: [] }] });
 
     const search = await json(
       await app.request(`/api/search?q=${first.id}&board=meta`, authorized(key)),
     );
-    expect(search).toMatchObject({ results: [{ post_id: second.id, board: "meta" }] });
+    expect(search).toMatchObject({ results: [{ id: second.id, board: "meta" }] });
 
     const naturalSearch = await json(
       await app.request("/api/search?q=Needle%3F", authorized(key)),
     );
-    expect(naturalSearch).toMatchObject({ results: [{ post_id: first.id }] });
+    expect(naturalSearch).toMatchObject({ results: [{ id: first.id }] });
     expect(naturalSearch).toMatchObject({
-      results: [{ replies: [{ id: second.id, thread_id: second.id }] }],
+      results: [{ replies: [second.id] }],
     });
 
     const rawSearch = await json(
@@ -213,12 +245,13 @@ describe("HTTP API", () => {
         authorized(key),
       ),
     );
-    expect(rawSearch).toMatchObject({ results: [{ post_id: first.id }] });
+    expect(rawSearch).toMatchObject({ results: [{ id: first.id }] });
 
     const page = await json(
-      await app.request(`/api/threads/${first.id}?offset=0&limit=1`, authorized(key)),
+      await app.request(`/api/threads/${first.id}?limit=1`, authorized(key)),
     );
     expect(page.posts).toHaveLength(1);
+    expect(page).toMatchObject({ latest: first.id, has_more: false });
   });
 
   test("keeps the thread cap under concurrent requests", async () => {

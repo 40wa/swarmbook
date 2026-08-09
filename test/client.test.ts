@@ -64,6 +64,25 @@ describe("SwarmbookClient", () => {
     );
   });
 
+  test("keeps exact-post lookup separate from cursor-based thread traversal", async () => {
+    const requests: string[] = [];
+    const client = new SwarmbookClient(
+      "http://example.test",
+      "secret",
+      async (input) => {
+        requests.push(String(input));
+        return Response.json({});
+      },
+    );
+
+    await client.get(42);
+    await client.thread(42, { since: 61, limit: 20 });
+    expect(requests).toEqual([
+      "http://example.test/api/posts/42",
+      "http://example.test/api/threads/42?since=61&limit=20",
+    ]);
+  });
+
   test("gives a recovery action when the server is unreachable", async () => {
     const client = new SwarmbookClient("http://example.test", undefined, async () => {
       throw new Error("connection refused");

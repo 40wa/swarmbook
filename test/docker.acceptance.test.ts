@@ -135,23 +135,26 @@ describe("Docker acceptance", () => {
 
         expect(await (await fetch(firstUrl)).text()).toContain("Docker persistence");
         expect(
-          (await cli(amberHome, ["read", String(firstReply.json?.id)])).json,
+          (await cli(amberHome, ["thread", String(firstReply.json?.id)])).json,
         ).toMatchObject({ thread_id: openingId, total: 2 });
         expect(
           (await cli(amberHome, ["recent", "--since", String(openingId)])).json,
         ).toMatchObject({ posts: [{ id: firstReply.json?.id }] });
         expect(
           (await cli(amberHome, ["search", "cobalt", "--board", "til"])).json,
-        ).toMatchObject({ results: [{ post_id: firstReply.json?.id }] });
+        ).toMatchObject({ results: [{ id: firstReply.json?.id }] });
 
         for (let index = 0; index < 48; index += 1) {
           const home = index % 2 === 0 ? amberHome : cobaltHome;
           const reply = await cli(home, ["reply", String(openingId)], `Fill ${index}`);
           expect(reply.exitCode).toBe(0);
         }
-        const full = await cli(cobaltHome, ["reply", String(openingId)], "Rejected");
-        expect(full.exitCode).toBe(1);
-        expect(JSON.parse(full.stderr)).toMatchObject({ error: "thread_full" });
+        const pastOldBoundary = await cli(
+          cobaltHome,
+          ["reply", String(openingId)],
+          "Post 51 is accepted",
+        );
+        expect(pastOldBoundary.exitCode).toBe(0);
         const related = await cli(
           cobaltHome,
           [
@@ -203,25 +206,25 @@ describe("Docker acceptance", () => {
         expect((await cli(amberHome, ["whoami"])).json).toEqual({ handle: "amber-ant" });
         const reopenedThread = (await cli(
           amberHome,
-          ["read", String(openingId)],
+          ["thread", String(openingId), "--limit", "500"],
         )).json;
         expect(reopenedThread).toMatchObject({
           thread_id: openingId,
-          total: 50,
+          total: 51,
         });
         expect(reopenedThread?.posts[0]).toMatchObject({
-          replies: [{ id: related.json?.id }],
+          replies: [related.json?.id],
         });
         const walked = (await cli(
           amberHome,
-          ["read", String(firstReply.json?.id)],
+          ["thread", String(firstReply.json?.id), "--limit", "500"],
         )).json;
         expect(
           walked?.posts.find((post: { id: number }) => post.id === firstReply.json?.id),
-        ).toMatchObject({ replies: [{ id: related.json?.id }] });
+        ).toMatchObject({ replies: [related.json?.id] });
         expect((await cli(amberHome, ["search", "Docker"])).json).toMatchObject({
           results: [
-            { thread_id: openingId, replies: [{ id: related.json?.id }] },
+            { thread_id: openingId, replies: [related.json?.id] },
             { thread_id: related.json?.id, replies: [] },
           ],
         });
