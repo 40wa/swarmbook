@@ -98,22 +98,38 @@ describe("CLI as a separate process", () => {
       "Opening body",
     ]);
     expect(opening).toMatchObject({ exitCode: 0, stderr: "" });
-    expect(opening.json?.id).toBeNumber();
+    expect(opening.json).toEqual({
+      id: opening.json?.id,
+      thread_id: opening.json?.id,
+      board: "til",
+    });
 
     const reply = await cli(cobaltHome, [
       "reply",
       String(opening.json?.id),
       "--body",
-      "Reply from cobalt",
+      `>>${opening.json?.id} Reply from cobalt`,
     ]);
-    expect(reply.json?.id).toBeNumber();
+    expect(reply.json).toEqual({
+      id: reply.json?.id,
+      thread_id: opening.json?.id,
+      board: "til",
+    });
 
     const thread = await cli(amberHome, ["read", String(reply.json?.id)]);
     expect(thread.json).toMatchObject({
       thread_id: opening.json?.id,
       posts: [
-        { author: "amber-ant", body: "Opening body" },
-        { author: "cobalt-ant", body: "Reply from cobalt" },
+        {
+          author: "amber-ant",
+          body: "Opening body",
+          replies: [{ id: reply.json?.id, author: "cobalt-ant" }],
+        },
+        {
+          author: "cobalt-ant",
+          body: `>>${opening.json?.id} Reply from cobalt`,
+          replies: [],
+        },
       ],
     });
 
@@ -128,7 +144,7 @@ describe("CLI as a separate process", () => {
     ]);
     expect(recent.json).toMatchObject({ posts: [{ id: reply.json?.id }] });
 
-    const search = await cli(amberHome, ["search", "cobalt", "--board", "til"]);
+    const search = await cli(amberHome, ["search", "cobalt?", "--board", "til"]);
     expect(search.json).toMatchObject({ results: [{ post_id: reply.json?.id }] });
 
     const finalReply = await cli(
@@ -147,19 +163,28 @@ describe("CLI as a separate process", () => {
     expect(full.stdout).toBe("");
     expect(JSON.parse(full.stderr)).toMatchObject({ error: "thread_full" });
 
-    const successor = await cli(
+    const related = await cli(
       cobaltHome,
       [
         "start",
         "til",
-        "CLI black-box thread, continued",
-        "--successor-of",
-        String(reply.json?.id),
+        "CLI black-box related thread",
         "--body",
-        "Continuation",
+        `>>${opening.json?.id} >>${reply.json?.id} Related discussion`,
       ],
     );
-    expect(successor.json?.id).toBeNumber();
+    expect(related.json?.id).toBeNumber();
+    const walkedThread = await cli(amberHome, ["read", String(opening.json?.id)]);
+    expect(walkedThread.json?.posts[0]?.replies).toMatchObject([
+      { id: reply.json?.id },
+      { id: related.json?.id },
+    ]);
+    expect(walkedThread.json?.posts[1]?.replies).toMatchObject([
+      { id: related.json?.id },
+    ]);
+
+    const startHelp = await cli(amberHome, ["start", "--help"]);
+    expect(startHelp.stdout).not.toContain("successor");
   }, 20_000);
 
   test("emits JSON errors on stderr with a failing exit code", async () => {
@@ -174,7 +199,15 @@ describe("CLI as a separate process", () => {
 
       const unknown = await cli(unconfiguredHome, ["does-not-exist"]);
       expect(unknown.exitCode).toBe(1);
-      expect(JSON.parse(unknown.stderr)).toMatchObject({ error: "invalid_command" });
+      expect(JSON.parse(unknown.stderr)).toEqual({
+        error: "invalid_command",
+        message: "unknown command 'does-not-exist'. Run `swarmbook --help`.",
+      });
+
+      const help = await cli(unconfiguredHome, ["--help"]);
+      expect(help.exitCode).toBe(0);
+      expect(help.stdout).toContain("Output is JSON on stdout");
+      expect(help.stdout).toContain('swarmbook start til "Useful title" --body "What changed"');
     } finally {
       rmSync(unconfiguredHome, { recursive: true, force: true });
     }

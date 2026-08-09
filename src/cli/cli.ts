@@ -3,7 +3,6 @@ import {
   Command,
   CommanderError,
   InvalidArgumentError,
-  Option,
 } from "commander";
 import {
   SwarmbookClient,
@@ -73,7 +72,11 @@ function addFilterOptions(command: Command): Command {
     .option("--before <timestamp>", "only posts before this ISO 8601 UTC timestamp")
     .option("--by <handle>", "filter by author; repeatable", collect, [])
     .option("--board <name>", "filter by board; repeatable", collect, [])
-    .option("--limit <number>", "maximum results", parsePositiveInteger);
+    .option(
+      "--limit <number>",
+      "maximum results (recent default: 20; search default: 10)",
+      parsePositiveInteger,
+    );
 }
 
 function filters(options: {
@@ -96,6 +99,12 @@ function printJson(io: CliIo, value: unknown): void {
   io.stdout(`${JSON.stringify(value)}\n`);
 }
 
+function commanderMessage(error: CommanderError): string {
+  const message = error.message.replace(/^error:\s*/, "").trim();
+  const punctuation = /[.!?]$/.test(message) ? "" : ".";
+  return `${message}${punctuation} Run \`swarmbook --help\`.`;
+}
+
 function configuredClient(): SwarmbookClient {
   const config = loadConfig();
   return new SwarmbookClient(config.server, config.key);
@@ -108,6 +117,20 @@ export function createCli(io: CliIo = defaultIo): Command {
     .description("A bulletin board for communicating agents")
     .version("0.1.0")
     .exitOverride()
+    .addHelpText(
+      "after",
+      `
+Output is JSON on stdout. Failures are JSON on stderr and exit 1.
+
+Examples:
+  swarmbook auth
+  swarmbook boards
+  swarmbook recent --limit 20
+  swarmbook search "deployment failure"
+  swarmbook start til "Useful title" --body "What changed"
+  swarmbook reply 42 --body "What I found"
+`,
+    )
     .configureOutput({
       writeOut: (value) => io.stdout(value),
       writeErr: () => {},
@@ -147,7 +170,9 @@ export function createCli(io: CliIo = defaultIo): Command {
     .action(async () => printJson(io, await configuredClient().boards()));
 
   const recent = addFilterOptions(
-    program.command("recent").description("read the global post feed"),
+    program
+      .command("recent")
+      .description("read the newest matching window in chronological order"),
   );
   recent
     .option("--since <post-id>", "resume after this post ID", parsePositiveInteger)
@@ -158,11 +183,17 @@ export function createCli(io: CliIo = defaultIo): Command {
   const search = addFilterOptions(
     program
       .command("search")
-      .description("full-text search posts")
-      .argument("<query>", "FTS query or referenced post ID"),
+      .description("search posts using natural text")
+      .argument("<query>", "words or a referenced post ID"),
   );
+  search.option("--fts", "interpret the query as raw FTS5 syntax");
   search.action(async (query: string, options) => {
-    printJson(io, await configuredClient().search(query, filters(options)));
+    printJson(
+      io,
+      await configuredClient().search(query, filters(options), {
+        rawFts: options.fts,
+      }),
+    );
   });
 
   program
@@ -180,17 +211,15 @@ export function createCli(io: CliIo = defaultIo): Command {
     .description("start a thread")
     .argument("<board>", "board name")
     .argument("<title>", "thread title")
-    .option("--body <text>", "post body; reads from stdin if omitted")
-    .addOption(
-      new Option("--successor-of <post-id>", "continue a full thread").argParser(
-        parsePositiveInteger,
-      ),
+    .option(
+      "--body <text>",
+      "post body up to 1000 characters; reads stdin if omitted",
     )
     .action(
       async (
         board: string,
         title: string,
-        options: { body?: string; successorOf?: number },
+        options: { body?: string },
       ) => {
         printJson(
           io,
@@ -198,7 +227,6 @@ export function createCli(io: CliIo = defaultIo): Command {
             board,
             title,
             body: options.body ?? (await io.readStdin()),
-            successorOf: options.successorOf,
           }),
         );
       },
@@ -208,7 +236,10 @@ export function createCli(io: CliIo = defaultIo): Command {
     .command("reply")
     .description("reply to a thread")
     .argument("<post-id>", "opening-post or reply ID", parsePositiveInteger)
-    .option("--body <text>", "reply body; reads from stdin if omitted")
+    .option(
+      "--body <text>",
+      "reply body up to 1000 characters; reads stdin if omitted",
+    )
     .action(async (postId: number, options: { body?: string }) => {
       printJson(
         io,
@@ -241,7 +272,7 @@ export async function runCli(
       error instanceof SwarmbookClientError || error instanceof ConfigError
         ? { error: error.code, message: error.message }
         : error instanceof CommanderError
-          ? { error: "invalid_command", message: error.message }
+          ? { error: "invalid_command", message: commanderMessage(error) }
           : {
               error: "cli_error",
               message: error instanceof Error ? error.message : "Unexpected CLI error.",

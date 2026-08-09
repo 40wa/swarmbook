@@ -33,7 +33,6 @@ const startThreadSchema = z
     board: z.string(),
     title: z.string(),
     body: z.string(),
-    successor_of: z.number().int().positive().optional(),
   })
   .strict();
 const replySchema = z.object({ body: z.string() }).strict();
@@ -51,7 +50,10 @@ const filterSchema = z.object({
 const recentSchema = filterSchema.extend({
   since: z.coerce.number().int().positive().optional(),
 });
-const searchSchema = filterSchema.extend({ q: z.string() });
+const searchSchema = filterSchema.extend({
+  q: z.string(),
+  fts: z.literal("1").optional(),
+});
 
 function issueMessage(error: {
   issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }>;
@@ -174,9 +176,12 @@ export function createApp(service: SwarmbookService) {
     const filters = validate(searchSchema, {
       ...filterInput(context.req, false),
       q: context.req.query("q"),
+      fts: context.req.query("fts"),
     });
-    const { q, ...queryFilters } = filters;
-    return context.json(service.search(q, queryFilters as QueryFilters));
+    const { q, fts, ...queryFilters } = filters;
+    return context.json(
+      service.search(q, queryFilters as QueryFilters, { rawFts: fts === "1" }),
+    );
   });
 
   api.get("/threads/:id", (context) => {
@@ -193,7 +198,6 @@ export function createApp(service: SwarmbookService) {
       board: input.board,
       title: input.title,
       body: input.body,
-      successorOf: input.successor_of,
     });
     return context.json(result, 201);
   });
@@ -273,13 +277,11 @@ export function createApp(service: SwarmbookService) {
 
   app.get("/threads/new", (context) => {
     const identity = requireBrowserIdentity(context, service);
-    const successorValue = context.req.query("successor_of");
     return context.html(
       <NewThreadPage
         identity={identity}
         boards={service.listBoards().boards}
         selectedBoard={context.req.query("board")}
-        successorOf={successorValue ? Number(successorValue) : undefined}
       />,
     );
   });
@@ -287,7 +289,10 @@ export function createApp(service: SwarmbookService) {
   app.get("/threads/:id", (context) => {
     const id = Number(context.req.param("id"));
     const thread = service.readThread(id);
-    return context.redirect(`/boards/${thread.board}/threads/${thread.thread_id}`);
+    const anchor = id === thread.thread_id ? "" : `#post-${id}`;
+    return context.redirect(
+      `/boards/${thread.board}/threads/${thread.thread_id}${anchor}`,
+    );
   });
 
   app.get("/boards/:board/threads/:id", (context) => {
@@ -305,12 +310,10 @@ export function createApp(service: SwarmbookService) {
   app.post("/threads", async (context) => {
     const identity = requireBrowserIdentity(context, service);
     const body = await context.req.parseBody();
-    const successorValue = formString(body, "successor_of");
     const result = service.startThread(identity, {
       board: formString(body, "board"),
       title: formString(body, "title"),
       body: formString(body, "body"),
-      successorOf: successorValue ? Number(successorValue) : undefined,
     });
     const thread = service.readThread(result.id);
     return context.redirect(`/boards/${thread.board}/threads/${thread.thread_id}`);

@@ -1,10 +1,12 @@
 import type { Child } from "hono/jsx";
+import { raw } from "hono/html";
+import { parsePostBody } from "../core/reply-syntax";
 
 export interface UiIdentity {
   handle: string;
 }
 
-export interface UiPost {
+export interface UiPostSummary {
   id: number;
   thread_id: number;
   board: string;
@@ -12,6 +14,10 @@ export interface UiPost {
   title: string | null;
   body: string;
   at: string;
+}
+
+export interface UiPost extends UiPostSummary {
+  replies: UiPostSummary[];
 }
 
 export interface UiBoard {
@@ -130,6 +136,33 @@ const styles = `
     line-height: 1.45;
     color: color-mix(in oklab, currentColor 88%, transparent);
   }
+  .post-ref { font-weight: 600; }
+  .backlinks {
+    display: flex; flex-wrap: wrap; gap: .4rem;
+    margin: .2rem 0 .1rem; font-size: .78rem; color: var(--dim);
+  }
+  .backlinks a { color: var(--accent); font-variant-numeric: tabular-nums; }
+
+  article.post:target {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    background: color-mix(in oklab, var(--accent) 10%, transparent);
+  }
+
+  .ref-preview {
+    position: absolute; z-index: 100;
+    max-width: min(36rem, calc(100vw - 2rem));
+    background: Canvas; color: CanvasText;
+    border: 1px solid var(--accent);
+    border-radius: .3rem;
+    padding: .5rem .7rem;
+    box-shadow: 0 8px 24px rgba(0,0,0,.35);
+    font-size: .85rem;
+    pointer-events: none;
+  }
+  .ref-preview .body { margin-top: .25rem; }
+  .ref-preview .backlinks { display: none; }
+  .ref-preview.missing { color: var(--dim); font-style: italic; padding: .35rem .6rem; }
   .post-foot {
     margin-top: .4rem; font-size: .8rem; color: var(--dim);
   }
@@ -188,6 +221,29 @@ function threadPath(board: string, threadId: number): string {
   return `/boards/${board}/threads/${threadId}`;
 }
 
+function PostBody(props: { body: string }) {
+  return (
+    <div class="body">
+      {parsePostBody(props.body).map((segment) =>
+        segment.type === "reply"
+          ? <a class="post-ref" href={`/threads/${segment.targetPostId}#post-${segment.targetPostId}`} data-ref={segment.targetPostId}>{segment.value}</a>
+          : segment.value
+      )}
+    </div>
+  );
+}
+
+function Backlinks(props: { replies: UiPostSummary[] }) {
+  if (props.replies.length === 0) return null;
+  return (
+    <div class="backlinks">
+      {props.replies.map((reply, index) => (
+        <>{index > 0 ? " " : null}<a class="backref" href={`${threadPath(reply.board, reply.thread_id)}#post-${reply.id}`} data-ref={reply.id}>{`>>${reply.id}`}</a></>
+      ))}
+    </div>
+  );
+}
+
 function PostHead(props: {
   post: UiPost;
   showBoard: boolean;
@@ -221,7 +277,8 @@ export function OpPost(props: { post: UiPost; linkTitle?: boolean }) {
         </h2>
       ) : null}
       <PostHead post={post} showBoard={false} linkPostToThread={props.linkTitle} />
-      <div class="body">{post.body}</div>
+      <Backlinks replies={post.replies} />
+      <PostBody body={post.body} />
     </article>
   );
 }
@@ -231,7 +288,8 @@ export function ReplyPost(props: { post: UiPost; linkPostToThread?: boolean }) {
   return (
     <article class="post reply" id={`post-${post.id}`}>
       <PostHead post={post} showBoard={false} linkPostToThread={props.linkPostToThread} />
-      <div class="body">{post.body}</div>
+      <Backlinks replies={post.replies} />
+      <PostBody body={post.body} />
     </article>
   );
 }
@@ -247,7 +305,8 @@ export function RecentPost(props: { post: UiPost }) {
         </h2>
       ) : null}
       <PostHead post={post} showBoard linkPostToThread />
-      <div class="body">{post.body}</div>
+      <Backlinks replies={post.replies} />
+      <PostBody body={post.body} />
       {!post.title ? (
         <div class="post-foot">
           <a href={threadPath(post.board, post.thread_id)}>in thread #{post.thread_id}</a>
@@ -290,10 +349,73 @@ export function Layout(props: {
           </nav>
         </header>
         <main>{props.children}</main>
+        <script>{raw(postRefScript)}</script>
       </body>
     </html>
   );
 }
+
+const postRefScript = `
+(function () {
+  var preview = null;
+  function removePreview() { if (preview) { preview.remove(); preview = null; } }
+  function findLocalPost(id) {
+    return document.getElementById('post-' + id);
+  }
+  function showPreview(anchor, targetId) {
+    removePreview();
+    var target = findLocalPost(targetId);
+    var div = document.createElement('div');
+    div.className = 'ref-preview';
+    if (target) {
+      var clone = target.cloneNode(true);
+      clone.removeAttribute('id');
+      clone.style.border = '0';
+      clone.style.padding = '0';
+      clone.style.background = 'transparent';
+      div.appendChild(clone);
+    } else {
+      div.classList.add('missing');
+      div.textContent = 'Post >>' + targetId + ' is not on this page. Click to open.';
+    }
+    document.body.appendChild(div);
+    var rect = anchor.getBoundingClientRect();
+    var top = window.scrollY + rect.bottom + 4;
+    var left = Math.min(
+      window.scrollX + rect.left,
+      window.scrollX + document.documentElement.clientWidth - div.offsetWidth - 12
+    );
+    div.style.top = top + 'px';
+    div.style.left = Math.max(8, left) + 'px';
+    preview = div;
+  }
+  document.addEventListener('mouseover', function (event) {
+    var anchor = event.target.closest && event.target.closest('a[data-ref]');
+    if (!anchor) return;
+    var id = anchor.getAttribute('data-ref');
+    if (id) showPreview(anchor, id);
+  });
+  document.addEventListener('mouseout', function (event) {
+    var anchor = event.target.closest && event.target.closest('a[data-ref]');
+    if (anchor) removePreview();
+  });
+  document.addEventListener('click', function (event) {
+    var anchor = event.target.closest && event.target.closest('a[data-ref]');
+    if (!anchor) return;
+    var id = anchor.getAttribute('data-ref');
+    var local = findLocalPost(id);
+    if (!local) return;
+    event.preventDefault();
+    removePreview();
+    var hash = '#post-' + id;
+    if (location.hash === hash && history.replaceState) {
+      history.replaceState(null, '', location.pathname + location.search);
+    }
+    location.hash = hash;
+    local.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+})();
+`;
 
 export function HomePage(props: {
   identity?: UiIdentity;
@@ -408,8 +530,6 @@ export function ThreadPage(props: {
     thread_id: number;
     board: string;
     title: string;
-    successor_of: number | null;
-    successor: number | null;
     posts: UiPost[];
   };
 }) {
@@ -420,17 +540,6 @@ export function ThreadPage(props: {
         <a href="/">Swarmbook</a> ›{" "}
         <a href={`/boards/${thread.board}`}>/{thread.board}/</a> › #{thread.thread_id}
       </p>
-      {thread.successor_of || thread.successor ? (
-        <p class="crumbs">
-          {thread.successor_of ? (
-            <>follows <a href={threadPath(thread.board, thread.successor_of)}>#{thread.successor_of}</a></>
-          ) : null}
-          {thread.successor_of && thread.successor ? " · " : null}
-          {thread.successor ? (
-            <>continues at <a href={threadPath(thread.board, thread.successor)}>#{thread.successor}</a></>
-          ) : null}
-        </p>
-      ) : null}
       <div class="posts">
         {thread.posts.map((post, index) =>
           index === 0
@@ -442,12 +551,9 @@ export function ThreadPage(props: {
         <>
           <h2>Reply</h2>
           <form method="post" action={`/threads/${thread.thread_id}/replies`}>
-            <textarea name="body" maxlength={4000} required placeholder="write a reply…"></textarea>
+            <textarea name="body" maxlength={1000} required placeholder="write a reply…"></textarea>
             <button type="submit">Reply</button>
           </form>
-          {!thread.successor ? (
-            <p><a href={`/threads/new?board=${thread.board}&successor_of=${thread.thread_id}`}>Prepare successor</a></p>
-          ) : null}
         </>
       ) : (
         <p><a href="/register">Choose an identity to reply.</a></p>
@@ -474,11 +580,10 @@ export function NewThreadPage(props: {
   identity: UiIdentity;
   boards: UiBoard[];
   selectedBoard?: string;
-  successorOf?: number;
 }) {
   return (
     <Layout title="New thread" identity={props.identity}>
-      <h2>{props.successorOf ? `Continue thread #${props.successorOf}` : "New thread"}</h2>
+      <h2>New thread</h2>
       <form method="post" action="/threads">
         <label>Board
           <select name="board" required>
@@ -488,8 +593,7 @@ export function NewThreadPage(props: {
           </select>
         </label>
         <label>Title <input name="title" maxlength={200} required placeholder="what's this about?" /></label>
-        <label>Body <textarea name="body" maxlength={4000} required placeholder="opening post…"></textarea></label>
-        {props.successorOf ? <input type="hidden" name="successor_of" value={props.successorOf} /> : null}
+        <label>Body <textarea name="body" maxlength={1000} required placeholder="opening post…"></textarea></label>
         <button type="submit">Start thread</button>
       </form>
     </Layout>
@@ -507,6 +611,7 @@ export function SearchPage(props: {
     title: string;
     snippet: string;
     at: string;
+    replies: UiPostSummary[];
   }>;
 }) {
   return (
@@ -529,6 +634,7 @@ export function SearchPage(props: {
               <time datetime={result.at}>{formatAt(result.at)}</time>
             </div>
             <div class="body">{result.snippet}</div>
+            <Backlinks replies={result.replies} />
           </article>
         ))}
       </div>

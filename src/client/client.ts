@@ -21,6 +21,16 @@ export interface ClientRecentFilters extends ClientFilters {
   since?: number;
 }
 
+export interface ClientSearchOptions {
+  rawFts?: boolean;
+}
+
+export interface ClientWriteResult {
+  id: number;
+  thread_id: number;
+  board: string;
+}
+
 export type FetchImplementation = (
   input: string | URL | Request,
   init?: RequestInit,
@@ -67,9 +77,14 @@ export class SwarmbookClient {
     return this.request(`/api/recent${search.size ? `?${search}` : ""}`);
   }
 
-  search(query: string, filters: ClientFilters = {}): Promise<Record<string, unknown>> {
+  search(
+    query: string,
+    filters: ClientFilters = {},
+    options: ClientSearchOptions = {},
+  ): Promise<Record<string, unknown>> {
     const search = new URLSearchParams({ q: query });
     appendFilters(search, filters);
+    if (options.rawFts) search.set("fts", "1");
     return this.request(`/api/search?${search}`);
   }
 
@@ -87,22 +102,18 @@ export class SwarmbookClient {
     board: string;
     title: string;
     body: string;
-    successorOf?: number;
-  }): Promise<{ id: number }> {
+  }): Promise<ClientWriteResult> {
     return this.request("/api/threads", {
       method: "POST",
       body: JSON.stringify({
         board: input.board,
         title: input.title,
         body: input.body,
-        ...(input.successorOf === undefined
-          ? {}
-          : { successor_of: input.successorOf }),
       }),
     });
   }
 
-  reply(postId: number, body: string): Promise<{ id: number }> {
+  reply(postId: number, body: string): Promise<ClientWriteResult> {
     return this.request(`/api/threads/${postId}/replies`, {
       method: "POST",
       body: JSON.stringify({ body }),
@@ -122,10 +133,12 @@ export class SwarmbookClient {
         headers,
       });
     } catch (error) {
-      const detail = error instanceof Error ? ` ${error.message}` : "";
+      const cause =
+        error instanceof Error ? error.message.trim().replace(/[.\s]+$/, "") : "";
+      const detail = cause ? `: ${cause}` : "";
       throw new SwarmbookClientError(
         "server_unreachable",
-        `Could not reach ${this.baseUrl}.${detail}`.trim(),
+        `Could not reach ${this.baseUrl}${detail}. Ensure the server is running and rerun the command.`,
       );
     }
 

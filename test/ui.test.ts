@@ -69,12 +69,15 @@ describe("server-rendered web UI", () => {
         "content-type": "application/x-www-form-urlencoded",
         cookie: cookie!,
       },
-      body: new URLSearchParams({ body: "Browser reply" }),
+      body: new URLSearchParams({
+        body: `>>${threadId} and >>999 can both be referenced`,
+      }),
     });
     expect(reply.status).toBe(302);
     expect(reply.headers.get("location")).toMatch(
       new RegExp(`^/boards/meta/threads/${threadId}#post-\\d+$`),
     );
+    const replyId = Number(reply.headers.get("location")!.split("#post-")[1]);
 
     const legacyThread = await app.request(`/threads/${threadId}`);
     expect(legacyThread.status).toBe(302);
@@ -83,10 +86,15 @@ describe("server-rendered web UI", () => {
     const page = await app.request(threadUrl, { headers: { cookie: cookie! } });
     const html = await page.text();
     expect(html).toContain("Browser thread");
-    expect(html).toContain("Browser reply");
+    expect(html).toContain(`href="/threads/${threadId}#post-${threadId}"`);
+    expect(html).toContain(`&gt;&gt;${threadId}</a>`);
+    expect(html).toContain('href="/threads/999#post-999"');
+    expect(html).toContain('class="backlinks"');
+    expect(html).toContain(`href="/boards/meta/threads/${threadId}#post-${replyId}"`);
     expect(html).toContain("&lt;script&gt;plain text only&lt;/script&gt;");
     expect(html).not.toContain("<script>plain text only</script>");
     expect(html).toContain("browser-ant");
+    expect(html).toContain('maxlength="1000"');
   });
 
   test("renders board pages and search results", async () => {

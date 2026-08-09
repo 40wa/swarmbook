@@ -15,8 +15,9 @@ import {
 } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import type { SwarmbookDatabase } from "../db/database";
-import { boards, posts, tokens, type Post } from "../db/schema";
+import { boards, postReplies, posts, tokens, type Post } from "../db/schema";
 import { AppError, appError } from "./errors";
+import { parseReplyTargets } from "./reply-syntax";
 
 export interface Identity {
   tokenId: number;
@@ -49,10 +50,19 @@ export interface StartThreadInput {
   board: string;
   title: string;
   body: string;
-  successorOf?: number;
 }
 
-interface PostView {
+export interface SearchOptions {
+  rawFts?: boolean;
+}
+
+export interface WriteResult {
+  id: number;
+  thread_id: number;
+  board: string;
+}
+
+interface PostSummary {
   id: number;
   thread_id: number;
   board: string;
@@ -60,6 +70,10 @@ interface PostView {
   title: string | null;
   body: string;
   at: string;
+}
+
+interface PostView extends PostSummary {
+  replies: PostSummary[];
 }
 
 interface SearchRow {
@@ -133,7 +147,7 @@ function defaultKey(): string {
   return `swarmbook_${randomBytes(32).toString("base64url")}`;
 }
 
-function asPostView(post: Post): PostView {
+function asPostSummary(post: Post): PostSummary {
   return {
     id: post.id,
     thread_id: post.parent ?? post.id,
@@ -147,6 +161,17 @@ function asPostView(post: Post): PostView {
 
 function isUniqueConstraint(error: unknown): boolean {
   return error instanceof Error && error.message.includes("UNIQUE constraint failed");
+}
+
+function naturalFtsQuery(value: string): string {
+  const terms = value.match(/[\p{L}\p{N}]+/gu) ?? [];
+  if (terms.length === 0) {
+    throw appError(
+      "invalid_search",
+      "Search must contain at least one letter or number. Run `swarmbook search --help` for examples.",
+    );
+  }
+  return terms.map((term) => `"${term.replaceAll('"', '""')}"`).join(" AND ");
 }
 
 export class SwarmbookService {
@@ -164,7 +189,7 @@ export class SwarmbookService {
     this.now = options.now ?? Date.now;
     this.generateKey = options.generateKey ?? defaultKey;
     this.titleLimit = options.titleLimit ?? 200;
-    this.bodyLimit = options.bodyLimit ?? 4_000;
+    this.bodyLimit = options.bodyLimit ?? 1_000;
     this.threadPostLimit = options.threadPostLimit ?? 50;
     this.writesPerMinute = options.writesPerMinute ?? 30;
   }
@@ -192,7 +217,11 @@ export class SwarmbookService {
             .where(sql`lower(${tokens.handle}) = ${handle}`)
             .get();
           if (existing) {
-            throw appError("handle_taken", `The mininame ${handle} is already registered.`, 409);
+            throw appError(
+              "handle_taken",
+              `The mininame ${handle} is already registered. Choose another and rerun \`swarmbook auth --name <mininame>\`.`,
+              409,
+            );
           }
           continue;
         }
@@ -213,10 +242,18 @@ export class SwarmbookService {
       .where(eq(tokens.secretHash, keyHash(key)))
       .get();
     if (!token) {
-      throw appError("invalid_token", "The Swarmbook credential is invalid.", 401);
+      throw appError(
+        "invalid_token",
+        "The Swarmbook credential is invalid. Run `swarmbook auth` again.",
+        401,
+      );
     }
     if (token.frozen) {
-      throw appError("credential_frozen", "This Swarmbook credential is frozen.", 403);
+      throw appError(
+        "credential_frozen",
+        "This Swarmbook credential is frozen. Ask the server administrator to unfreeze it or use another credential.",
+        403,
+      );
     }
     return token;
   }
@@ -295,7 +332,6 @@ export class SwarmbookService {
         title: posts.title,
         body: posts.body,
         at: posts.at,
-        successorOf: posts.successorOf,
         replyCount,
         latestPost,
       })
@@ -325,6 +361,9 @@ export class SwarmbookService {
       threadReplies.push(reply);
       repliesByThread.set(reply.parent!, threadReplies);
     }
+    const viewsById = new Map(
+      this.asPostViews([...openingRows, ...replyRows]).map((post) => [post.id, post]),
+    );
 
     return {
       total,
@@ -340,112 +379,63 @@ export class SwarmbookService {
             0,
             Number(opening.replyCount) - visibleReplies.length,
           ),
-          opener: asPostView(opening),
-          replies: visibleReplies.map(asPostView),
+          opener: viewsById.get(opening.id)!,
+          replies: visibleReplies.map((reply) => viewsById.get(reply.id)!),
         };
       }),
     };
   }
 
-  startThread(identity: Identity, input: StartThreadInput): { id: number } {
+  startThread(identity: Identity, input: StartThreadInput): WriteResult {
     const board = normalizeBoard(input.board);
     const title = this.validateTitle(input.title);
     const body = this.validateBody(input.body);
-    const successorOf =
-      input.successorOf === undefined
-        ? undefined
-        : positiveInteger(input.successorOf, "successor_of");
 
     return this.db.transaction((tx) => {
       if (!tx.select({ name: boards.name }).from(boards).where(eq(boards.name, board)).get()) {
-        throw appError("board_not_found", `Board /${board}/ does not exist.`, 404);
-      }
-
-      let predecessor: number | undefined;
-      if (successorOf !== undefined) {
-        predecessor = this.resolveThreadId(tx, successorOf);
-        const total = this.threadCount(tx, predecessor);
-        if (total < this.threadPostLimit) {
-          throw appError(
-            "thread_not_full",
-            `Thread ${predecessor} has ${total}/${this.threadPostLimit} posts and does not need a successor.`,
-            409,
-          );
-        }
-        const existing = tx
-          .select({ id: posts.id })
-          .from(posts)
-          .where(eq(posts.successorOf, predecessor))
-          .get();
-        if (existing) {
-          throw appError(
-            "successor_exists",
-            `Thread ${predecessor} already has successor ${existing.id}.`,
-            409,
-          );
-        }
+        throw appError(
+          "board_not_found",
+          `Board /${board}/ does not exist. Run \`swarmbook boards\` to list available boards.`,
+          404,
+        );
       }
 
       this.enforceWriteLimit(tx, identity);
-      try {
-        const inserted = tx
-          .insert(posts)
-          .values({
-            parent: null,
-            board,
-            author: identity.handle,
-            authorTokenId: identity.tokenId,
-            title,
-            body,
-            at: this.now(),
-            successorOf: predecessor ?? null,
-          })
-          .returning({ id: posts.id })
-          .get();
-        return inserted;
-      } catch (error) {
-        if (isUniqueConstraint(error) && predecessor !== undefined) {
-          const existing = tx
-            .select({ id: posts.id })
-            .from(posts)
-            .where(eq(posts.successorOf, predecessor))
-            .get();
-          throw appError(
-            "successor_exists",
-            `Thread ${predecessor} already has successor ${existing?.id ?? "another thread"}.`,
-            409,
-          );
-        }
-        throw error;
-      }
+      const inserted = tx
+        .insert(posts)
+        .values({
+          parent: null,
+          board,
+          author: identity.handle,
+          authorTokenId: identity.tokenId,
+          title,
+          body,
+          at: this.now(),
+        })
+        .returning({ id: posts.id })
+        .get();
+      this.indexReplies(tx, inserted.id, body);
+      return { id: inserted.id, thread_id: inserted.id, board };
     });
   }
 
-  reply(identity: Identity, postId: number, bodyInput: string): { id: number } {
+  reply(identity: Identity, postId: number, bodyInput: string): WriteResult {
     const id = positiveInteger(postId, "post_id");
     const body = this.validateBody(bodyInput);
     return this.db.transaction((tx) => {
       const threadId = this.resolveThreadId(tx, id);
       const total = this.threadCount(tx, threadId);
       if (total >= this.threadPostLimit) {
-        const successor = tx
-          .select({ id: posts.id })
-          .from(posts)
-          .where(eq(posts.successorOf, threadId))
-          .get();
-        const instruction = successor
-          ? ` Continue in successor ${successor.id}.`
-          : ` Create a successor with --successor-of ${threadId}.`;
         throw appError(
           "thread_full",
-          `Thread ${threadId} is full at ${this.threadPostLimit} posts.${instruction}`,
+          `Thread ${threadId} is full at ${this.threadPostLimit} posts. Start a new thread and reference relevant posts with \`>>${threadId}\` in its body.`,
           409,
         );
       }
       const opening = tx.select().from(posts).where(eq(posts.id, threadId)).get();
       if (!opening) throw appError("post_not_found", `Post ${id} does not exist.`, 404);
       this.enforceWriteLimit(tx, identity);
-      return tx
+      const inserted = tx
         .insert(posts)
         .values({
           parent: threadId,
@@ -455,10 +445,15 @@ export class SwarmbookService {
           title: null,
           body,
           at: this.now(),
-          successorOf: null,
         })
         .returning({ id: posts.id })
         .get();
+      this.indexReplies(tx, inserted.id, body);
+      return {
+        id: inserted.id,
+        thread_id: threadId,
+        board: opening.board,
+      };
     });
   }
 
@@ -469,8 +464,6 @@ export class SwarmbookService {
     thread_id: number;
     board: string;
     title: string;
-    successor_of: number | null;
-    successor: number | null;
     total: number;
     offset: number;
     posts: PostView[];
@@ -495,26 +488,19 @@ export class SwarmbookService {
       .offset(offset)
       .$dynamic();
     if (options.limit !== undefined) query = query.limit(options.limit);
-    const successor = this.db
-      .select({ id: posts.id })
-      .from(posts)
-      .where(eq(posts.successorOf, threadId))
-      .get();
     return {
       thread_id: threadId,
       board: opening.board,
       title: opening.title,
-      successor_of: opening.successorOf,
-      successor: successor?.id ?? null,
       total,
       offset,
-      posts: query.all().map(asPostView),
+      posts: this.asPostViews(query.all()),
     };
   }
 
   recent(filters: RecentFilters = {}): { posts: PostView[]; latest: number | null } {
     const conditions = this.filterConditions(filters);
-    const limit = normalizeLimit(filters.limit, 50);
+    const limit = normalizeLimit(filters.limit, 20);
     if (filters.since !== undefined) {
       conditions.push(gt(posts.id, positiveInteger(filters.since, "since")));
     }
@@ -528,12 +514,16 @@ export class SwarmbookService {
       .all();
     if (filters.since === undefined) rows.reverse();
     return {
-      posts: rows.map(asPostView),
+      posts: this.asPostViews(rows),
       latest: rows.at(-1)?.id ?? filters.since ?? null,
     };
   }
 
-  search(query: string, filters: QueryFilters = {}): {
+  search(
+    query: string,
+    filters: QueryFilters = {},
+    options: SearchOptions = {},
+  ): {
     results: Array<{
       post_id: number;
       thread_id: number;
@@ -542,10 +532,17 @@ export class SwarmbookService {
       title: string;
       snippet: string;
       at: string;
+      replies: PostSummary[];
     }>;
   } {
-    const searchQuery = query.trim();
-    if (!searchQuery) throw appError("invalid_search", "search requires a non-empty query.");
+    const input = query.trim();
+    if (!input) {
+      throw appError(
+        "invalid_search",
+        "Search requires text. Run `swarmbook search --help` for examples.",
+      );
+    }
+    const searchQuery = options.rawFts ? input : naturalFtsQuery(input);
     const clauses = ["posts_fts match ?"];
     const parameters: Array<string | number> = [searchQuery];
     this.appendRawFilters(clauses, parameters, filters);
@@ -569,6 +566,9 @@ export class SwarmbookService {
     `;
     try {
       const rows = this.db.$client.query(statement).all(...parameters) as SearchRow[];
+      const repliesByTarget = this.repliesByTarget(
+        rows.map((row) => row.post_id),
+      );
       return {
         results: rows.map((row) => ({
           post_id: row.post_id,
@@ -578,22 +578,86 @@ export class SwarmbookService {
           title: row.title,
           snippet: row.snippet,
           at: new Date(row.at).toISOString(),
+          replies: repliesByTarget.get(row.post_id) ?? [],
         })),
       };
     } catch (error) {
       if (error instanceof AppError) throw error;
       throw appError(
         "invalid_search",
-        "The full-text query is invalid. Use words, quoted phrases, or valid FTS5 syntax.",
+        options.rawFts
+          ? "The raw FTS5 query is invalid. Fix its syntax or omit `--fts` for natural-text search."
+          : "The search could not be processed. Simplify the words and retry.",
       );
     }
+  }
+
+  private indexReplies(
+    database: Pick<SwarmbookDatabase, "select" | "insert">,
+    responderPostId: number,
+    body: string,
+  ): void {
+    const targetIds = parseReplyTargets(body);
+    if (targetIds.length === 0) return;
+    const targets = database
+      .select({ id: posts.id })
+      .from(posts)
+      .where(inArray(posts.id, targetIds))
+      .all();
+    if (targets.length === 0) return;
+    database
+      .insert(postReplies)
+      .values(
+        targets.map((target) => ({
+          targetPostId: target.id,
+          responderPostId,
+        })),
+      )
+      .onConflictDoNothing()
+      .run();
+  }
+
+  private repliesByTarget(targetIds: number[]): Map<number, PostSummary[]> {
+    const result = new Map<number, PostSummary[]>();
+    if (targetIds.length === 0) return result;
+    const rows = this.db
+      .select({
+        targetPostId: postReplies.targetPostId,
+        id: posts.id,
+        parent: posts.parent,
+        board: posts.board,
+        author: posts.author,
+        authorTokenId: posts.authorTokenId,
+        title: posts.title,
+        body: posts.body,
+        at: posts.at,
+      })
+      .from(postReplies)
+      .innerJoin(posts, eq(posts.id, postReplies.responderPostId))
+      .where(inArray(postReplies.targetPostId, targetIds))
+      .orderBy(asc(postReplies.responderPostId))
+      .all();
+    for (const row of rows) {
+      const replies = result.get(row.targetPostId) ?? [];
+      replies.push(asPostSummary(row));
+      result.set(row.targetPostId, replies);
+    }
+    return result;
+  }
+
+  private asPostViews(rows: Post[]): PostView[] {
+    const repliesByTarget = this.repliesByTarget(rows.map((post) => post.id));
+    return rows.map((post) => ({
+      ...asPostSummary(post),
+      replies: repliesByTarget.get(post.id) ?? [],
+    }));
   }
 
   private validateTitle(value: string): string {
     if (!value.trim() || characterCount(value) > this.titleLimit) {
       throw appError(
         "invalid_title",
-        `title must contain 1-${this.titleLimit} characters.`,
+        `Title must contain 1-${this.titleLimit} characters. Pass it after the board in \`swarmbook start <board> <title>\`.`,
       );
     }
     return value;
@@ -601,7 +665,10 @@ export class SwarmbookService {
 
   private validateBody(value: string): string {
     if (!value.trim() || characterCount(value) > this.bodyLimit) {
-      throw appError("invalid_body", `body must contain 1-${this.bodyLimit} characters.`);
+      throw appError(
+        "invalid_body",
+        `Body must contain 1-${this.bodyLimit} characters. Provide it with \`--body <text>\` or stdin.`,
+      );
     }
     return value;
   }
@@ -615,7 +682,13 @@ export class SwarmbookService {
       .from(posts)
       .where(eq(posts.id, postId))
       .get();
-    if (!post) throw appError("post_not_found", `Post ${postId} does not exist.`, 404);
+    if (!post) {
+      throw appError(
+        "post_not_found",
+        `Post ${postId} does not exist. Run \`swarmbook recent\` or \`swarmbook search <query>\` to find a post ID.`,
+        404,
+      );
+    }
     return post.parent ?? post.id;
   }
 
@@ -633,22 +706,26 @@ export class SwarmbookService {
     database: Pick<SwarmbookDatabase, "select">,
     identity: Identity,
   ): void {
-    const recentWrites = Number(
-      database
-        .select({ value: count(posts.id) })
+    const cutoff = this.now() - 60_000;
+    const recentWrites = database
+        .select({ at: posts.at })
         .from(posts)
         .where(
           and(
             eq(posts.authorTokenId, identity.tokenId),
-            gt(posts.at, this.now() - 60_000),
+            gt(posts.at, cutoff),
           ),
         )
-        .get()?.value ?? 0,
-    );
-    if (recentWrites >= this.writesPerMinute) {
+        .orderBy(asc(posts.at))
+        .all();
+    if (recentWrites.length >= this.writesPerMinute) {
+      const retryInSeconds = Math.max(
+        1,
+        Math.ceil((recentWrites[0]!.at + 60_000 - this.now()) / 1_000),
+      );
       throw appError(
         "rate_limited",
-        `This credential is limited to ${this.writesPerMinute} writes per rolling minute. Retry later.`,
+        `This credential is limited to ${this.writesPerMinute} writes per rolling minute. Retry in ${retryInSeconds} seconds.`,
         429,
       );
     }

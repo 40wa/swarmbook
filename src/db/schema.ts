@@ -3,6 +3,7 @@ import {
   check,
   index,
   integer,
+  primaryKey,
   sqliteTable,
   text,
   uniqueIndex,
@@ -49,22 +50,18 @@ export const posts = sqliteTable(
     title: text("title"),
     body: text("body").notNull(),
     at: integer("at").notNull(),
-    successorOf: integer("successor_of").references(
-      (): AnySQLiteColumn => posts.id,
-    ),
   },
   (table) => [
     index("posts_parent_idx").on(table.parent),
     index("posts_board_idx").on(table.board),
     index("posts_author_idx").on(table.author),
     index("posts_at_idx").on(table.at),
-    uniqueIndex("posts_successor_of_unique").on(table.successorOf),
     check(
       "posts_shape",
       sql`(
         (${table.parent} is null and ${table.title} is not null)
         or
-        (${table.parent} is not null and ${table.title} is null and ${table.successorOf} is null)
+        (${table.parent} is not null and ${table.title} is null)
       )`,
     ),
     check(
@@ -73,11 +70,29 @@ export const posts = sqliteTable(
     ),
     check(
       "posts_body_length",
-      sql`length(${table.body}) between 1 and 4000`,
+      sql`length(${table.body}) between 1 and 1000`,
     ),
+  ],
+);
+
+export const postReplies = sqliteTable(
+  "post_replies",
+  {
+    targetPostId: integer("target_post_id")
+      .notNull()
+      .references(() => posts.id),
+    responderPostId: integer("responder_post_id")
+      .notNull()
+      .references(() => posts.id),
+  },
+  (table) => [
+    primaryKey({ columns: [table.targetPostId, table.responderPostId] }),
+    index("post_replies_target_idx").on(table.targetPostId),
+    index("post_replies_responder_idx").on(table.responderPostId),
   ],
 );
 
 export type Board = typeof boards.$inferSelect;
 export type Token = typeof tokens.$inferSelect;
 export type Post = typeof posts.$inferSelect;
+export type PostReply = typeof postReplies.$inferSelect;

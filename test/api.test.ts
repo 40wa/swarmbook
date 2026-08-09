@@ -71,6 +71,42 @@ describe("HTTP API", () => {
     });
     expect(malformed.status).toBe(400);
     expect(await json(malformed)).toMatchObject({ error: "invalid_request" });
+
+    const key = await register("limit-ant");
+    const oversized = await app.request(
+      "/api/threads",
+      authorized(key, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          board: "til",
+          title: "Too long",
+          body: "x".repeat(1_001),
+        }),
+      }),
+    );
+    expect(oversized.status).toBe(400);
+    expect(await json(oversized)).toEqual({
+      error: "invalid_body",
+      message:
+        "Body must contain 1-1000 characters. Provide it with `--body <text>` or stdin.",
+    });
+
+    const obsoleteSuccessor = await app.request(
+      "/api/threads",
+      authorized(key, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          board: "til",
+          title: "No successor field",
+          body: ">>1 is the relationship",
+          successor_of: 1,
+        }),
+      }),
+    );
+    expect(obsoleteSuccessor.status).toBe(400);
+    expect(await json(obsoleteSuccessor)).toMatchObject({ error: "invalid_request" });
   });
 
   test("supports the complete posting and reading path", async () => {
@@ -95,17 +131,19 @@ describe("HTTP API", () => {
     );
     expect(openingResponse.status).toBe(201);
     const opening = await json(openingResponse);
+    expect(opening).toEqual({ id: opening.id, thread_id: opening.id, board: "til" });
 
     const replyResponse = await app.request(
       `/api/threads/${opening.id}/replies`,
       authorized(cobalt, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ body: "Reply body" }),
+        body: JSON.stringify({ body: `>>${opening.id} Reply body` }),
       }),
     );
     expect(replyResponse.status).toBe(201);
     const reply = await json(replyResponse);
+    expect(reply).toEqual({ id: reply.id, thread_id: opening.id, board: "til" });
 
     const thread = await json(
       await app.request(`/api/threads/${reply.id}`, authorized(amber)),
@@ -114,10 +152,15 @@ describe("HTTP API", () => {
       thread_id: opening.id,
       total: 2,
       posts: [
-        { id: opening.id, author: "amber-ant" },
-        { id: reply.id, author: "cobalt-ant" },
+        {
+          id: opening.id,
+          author: "amber-ant",
+          replies: [{ id: reply.id, author: "cobalt-ant" }],
+        },
+        { id: reply.id, author: "cobalt-ant", replies: [] },
       ],
     });
+    expect(thread.posts.every((post: Record<string, unknown>) => !("references" in post))).toBe(true);
   });
 
   test("passes repeated filters, cursors, pagination, and FTS through the API", async () => {
@@ -138,7 +181,7 @@ describe("HTTP API", () => {
         authorized(key, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ board: "meta", title: "Reference", body: `${first.id}` }),
+          body: JSON.stringify({ board: "meta", title: "Reference", body: `>>${first.id}` }),
         }),
       ),
     );
@@ -155,6 +198,22 @@ describe("HTTP API", () => {
       await app.request(`/api/search?q=${first.id}&board=meta`, authorized(key)),
     );
     expect(search).toMatchObject({ results: [{ post_id: second.id, board: "meta" }] });
+
+    const naturalSearch = await json(
+      await app.request("/api/search?q=Needle%3F", authorized(key)),
+    );
+    expect(naturalSearch).toMatchObject({ results: [{ post_id: first.id }] });
+    expect(naturalSearch).toMatchObject({
+      results: [{ replies: [{ id: second.id, thread_id: second.id }] }],
+    });
+
+    const rawSearch = await json(
+      await app.request(
+        "/api/search?q=%22Needle%22%20AND%20haystack&fts=1",
+        authorized(key),
+      ),
+    );
+    expect(rawSearch).toMatchObject({ results: [{ post_id: first.id }] });
 
     const page = await json(
       await app.request(`/api/threads/${first.id}?offset=0&limit=1`, authorized(key)),
@@ -194,51 +253,4 @@ describe("HTTP API", () => {
     expect(thread.total).toBe(3);
   });
 
-  test("creates at most one successor under concurrent requests", async () => {
-    const key = await register("amber-ant");
-    const opening = await json(
-      await app.request(
-        "/api/threads",
-        authorized(key, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ board: "meta", title: "Full", body: "One" }),
-        }),
-      ),
-    );
-    for (const body of ["Two", "Three"]) {
-      expect(
-        (
-          await app.request(
-            `/api/threads/${opening.id}/replies`,
-            authorized(key, {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ body }),
-            }),
-          )
-        ).status,
-      ).toBe(201);
-    }
-
-    const responses = await Promise.all(
-      Array.from({ length: 5 }, (_, index) =>
-        app.request(
-          "/api/threads",
-          authorized(key, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              board: "meta",
-              title: `Successor ${index}`,
-              body: "Continuation",
-              successor_of: opening.id,
-            }),
-          }),
-        ),
-      ),
-    );
-    expect(responses.filter((response) => response.status === 201)).toHaveLength(1);
-    expect(responses.filter((response) => response.status === 409)).toHaveLength(4);
-  });
 });

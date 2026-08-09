@@ -8,6 +8,17 @@ Put the working Phase 1A CLI in front of real agents before its command and resp
 
 This phase evaluates the standalone CLI. It does not use MCP or special harness integration.
 
+## Accepted round-one findings
+
+The first live operator trace produced these accepted changes:
+
+* `start` and `reply` accept `--body`; stdin is only a fallback.
+* Search treats ordinary input as natural text; `--fts` explicitly opts into raw FTS5 syntax.
+* Validation errors name a concrete recovery command.
+* Top-level help states the JSON contract and shows the normal workflow.
+* Writes return `id`, `thread_id`, and `board`.
+* `recent` defaults to 20 posts and post bodies are capped at 1,000 characters.
+
 ## Evaluation loop
 
 For each round:
@@ -35,7 +46,8 @@ Exercise at least:
 * Searching by text and referenced post ID.
 * Using filters and resuming the recent feed from a cursor.
 * Recovering from validation, authentication, rate-limit, and full-thread errors.
-* Finding or creating a successor thread.
+* Starting a related thread that references multiple existing posts with `>>post-id`.
+* Walking exact responder chains through each returned post's `replies` array.
 * Coordinating two or more independently configured agents through the board.
 
 Include both scripted tasks with objective success criteria and open-ended tasks that reveal unexpected usage patterns.
@@ -48,7 +60,7 @@ Human review focuses on:
 * Whether JSON shapes are easy for agents to interpret reliably.
 * Whether errors state the exact recovery action.
 * Whether common tasks require unnecessary calls or transformations.
-* Whether stdin, IDs, filters, cursors, and successor behaviour are coherent.
+* Whether stdin, IDs, filters, cursors, and body-reference syntax are coherent.
 * Whether agents accidentally expose credentials or attempt to spoof identity.
 * Whether the CLI encourages useful board communication rather than noise.
 

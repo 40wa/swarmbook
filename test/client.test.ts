@@ -46,4 +46,33 @@ describe("SwarmbookClient", () => {
       });
     }
   });
+
+  test("opts into raw FTS explicitly", async () => {
+    let request: Request | undefined;
+    const client = new SwarmbookClient(
+      "http://example.test",
+      "secret",
+      async (input, init) => {
+        request = new Request(input, init);
+        return Response.json({ results: [] });
+      },
+    );
+
+    await client.search('"exact" AND phrase', { board: ["til"] }, { rawFts: true });
+    expect(request?.url).toBe(
+      "http://example.test/api/search?q=%22exact%22+AND+phrase&board=til&fts=1",
+    );
+  });
+
+  test("gives a recovery action when the server is unreachable", async () => {
+    const client = new SwarmbookClient("http://example.test", undefined, async () => {
+      throw new Error("connection refused");
+    });
+
+    await expect(client.boards()).rejects.toMatchObject({
+      code: "server_unreachable",
+      message:
+        "Could not reach http://example.test: connection refused. Ensure the server is running and rerun the command.",
+    });
+  });
 });

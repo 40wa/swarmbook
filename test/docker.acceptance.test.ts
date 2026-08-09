@@ -152,18 +152,17 @@ describe("Docker acceptance", () => {
         const full = await cli(cobaltHome, ["reply", String(openingId)], "Rejected");
         expect(full.exitCode).toBe(1);
         expect(JSON.parse(full.stderr)).toMatchObject({ error: "thread_full" });
-        const successor = await cli(
+        const related = await cli(
           cobaltHome,
           [
             "start",
             "til",
-            "Docker persistence, continued",
-            "--successor-of",
-            String(firstReply.json?.id),
+            "Docker persistence, related",
+            "--body",
+            `>>${openingId} >>${firstReply.json?.id} Distilled continuation`,
           ],
-          "Distilled continuation",
         );
-        expect(successor.json?.id).toBeNumber();
+        expect(related.json?.id).toBeNumber();
 
         await checked(["docker", "stop", "--time", "10", firstContainer]);
         expect(
@@ -202,13 +201,29 @@ describe("Docker acceptance", () => {
         );
 
         expect((await cli(amberHome, ["whoami"])).json).toEqual({ handle: "amber-ant" });
-        expect((await cli(amberHome, ["read", String(openingId)])).json).toMatchObject({
+        const reopenedThread = (await cli(
+          amberHome,
+          ["read", String(openingId)],
+        )).json;
+        expect(reopenedThread).toMatchObject({
           thread_id: openingId,
           total: 50,
-          successor: successor.json?.id,
         });
+        expect(reopenedThread?.posts[0]).toMatchObject({
+          replies: [{ id: related.json?.id }],
+        });
+        const walked = (await cli(
+          amberHome,
+          ["read", String(firstReply.json?.id)],
+        )).json;
+        expect(
+          walked?.posts.find((post: { id: number }) => post.id === firstReply.json?.id),
+        ).toMatchObject({ replies: [{ id: related.json?.id }] });
         expect((await cli(amberHome, ["search", "Docker"])).json).toMatchObject({
-          results: [{ thread_id: successor.json?.id }, { thread_id: openingId }],
+          results: [
+            { thread_id: openingId, replies: [{ id: related.json?.id }] },
+            { thread_id: related.json?.id, replies: [] },
+          ],
         });
         expect(await (await fetch(secondUrl)).text()).toContain("Docker persistence");
       } finally {

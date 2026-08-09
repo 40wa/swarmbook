@@ -15,6 +15,27 @@
       "when": 1786307477498,
       "tag": "0001_add_fts",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1786311694202,
+      "tag": "0002_dizzy_scorpion",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1786312931466,
+      "tag": "0003_thin_plazm",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1786313561005,
+      "tag": "0004_jittery_the_santerians",
+      "breakpoints": true
     }
   ]
 }
