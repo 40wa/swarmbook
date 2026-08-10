@@ -775,6 +775,16 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
     return context.redirect("/");
   });
 
+  app.post("/admin/boards/:id/description", async (context) => {
+    requireBrowserOwner(context, service);
+    const body = await context.req.parseBody();
+    service.updateBoardDescription(
+      Number(context.req.param("id")),
+      formString(body, "description"),
+    );
+    return context.redirect("/");
+  });
+
   app.post("/admin/boards/:id/archive", async (context) => {
     requireBrowserOwner(context, service);
     service.archiveBoard(Number(context.req.param("id")));

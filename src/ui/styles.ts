@@ -67,14 +67,16 @@ export const styles = `
 
   .board-index { display: grid; gap: .6rem; }
   .board-row {
-    display: grid; gap: .1rem .9rem;
-    grid-template-columns: minmax(6rem, auto) 1fr auto auto;
-    align-items: baseline;
-    padding: .55rem .7rem; border: 1px solid var(--rule); border-radius: .3rem;
+    display: grid; gap: .18rem .9rem;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas: "name stats action" "desc desc desc";
+    align-items: start;
+    padding: .65rem .75rem; border: 1px solid var(--rule); border-radius: .3rem;
   }
-  .board-row .name { font-weight: 600; }
-  .board-row .desc { color: var(--dim); grid-column: 2 / 3; }
-  .board-row .stats { color: var(--dim); font-size: .8rem; text-align: right; white-space: nowrap; }
+  .board-row .name { grid-area: name; font-weight: 600; }
+  .board-row .desc { grid-area: desc; color: var(--dim); font-size: .76rem; line-height: 1.35; }
+  .board-row .board-stats { grid-area: stats; color: var(--dim); font-size: .76rem; text-align: right; white-space: nowrap; }
+  .board-row .board-action { grid-area: action; }
   .board-row .board-menu {
     position: relative;
     justify-self: end;
@@ -93,18 +95,29 @@ export const styles = `
     background: var(--surface-elevated); color: var(--page-fg);
     border: 1px solid var(--rule); border-radius: .3rem;
     box-shadow: 0 6px 16px rgba(0,0,0,.18);
-    min-width: 8rem; padding: .2rem;
+    width: min(22rem, calc(100vw - 3rem)); padding: .55rem;
     z-index: 40;
   }
   .board-row .board-menu .menu form { margin: 0; }
+  .board-row .board-menu .board-description-form {
+    gap: .4rem; padding: 0 0 .55rem; border-bottom: 1px solid var(--rule);
+  }
+  .board-row .board-menu .board-description-form textarea {
+    box-sizing: border-box; width: 100%; min-height: 4rem;
+  }
+  .board-row .board-menu .board-archive-form { padding-top: .35rem; }
   .board-row .board-menu .menu button {
     width: 100%; text-align: left;
-    padding: .35rem .55rem;
+    padding: .4rem .55rem;
     border: none; background: transparent;
     color: inherit; font: inherit;
     border-radius: .2rem;
   }
   .board-row .board-menu .menu button:hover {
+    background: color-mix(in oklab, var(--accent) 14%, transparent);
+    color: var(--accent);
+  }
+  .board-row .board-menu .menu .archive-button:hover {
     background: color-mix(in oklab, #d44 20%, transparent);
     color: #d44;
   }
@@ -164,7 +177,7 @@ export const styles = `
 
   .post-head {
     display: flex; align-items: baseline; gap: .6rem;
-    font-size: .82rem; color: var(--dim);
+    font-size: .86rem; color: var(--dim);
   }
   .post-head .author { color: inherit; font-weight: 600; color: color-mix(in oklab, currentColor 85%, transparent); }
   .post-head .board-tag { color: var(--dim); }
@@ -175,7 +188,7 @@ export const styles = `
   .body {
     white-space: pre-wrap; overflow-wrap: anywhere;
     margin: .3rem 0 0;
-    font-size: .88rem;
+    font-size: .8rem;
     line-height: 1.45;
     color: color-mix(in oklab, currentColor 88%, transparent);
   }
@@ -327,7 +340,7 @@ export const styles = `
   .live-tail a { color: inherit; text-decoration: none; display: block; }
   .live-tail .row {
     display: flex; align-items: baseline; gap: .35rem;
-    font-size: .72rem; color: var(--dim);
+    font-size: .78rem; color: var(--dim);
   }
   .live-tail .row .author { color: color-mix(in oklab, currentColor 88%, transparent); font-weight: 600; }
   .live-tail .row time { margin-left: auto; font-variant-numeric: tabular-nums; }
@@ -338,6 +351,7 @@ export const styles = `
   }
   .live-tail .snippet {
     margin-top: .15rem;
+    font-size: .74rem;
     display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
     overflow: hidden;
     color: color-mix(in oklab, currentColor 82%, transparent);
@@ -496,7 +510,10 @@ export const styles = `
   @media (max-width: 600px) {
     body { padding: .75rem; }
     .preview-replies, .omitted { margin-left: .5rem; }
-    .board-row { grid-template-columns: 1fr auto; }
-    .board-row .desc { grid-column: 1 / -1; }
+    .board-row {
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas: "name action" "desc desc" "stats stats";
+    }
+    .board-row .board-stats { text-align: left; }
   }
 `;

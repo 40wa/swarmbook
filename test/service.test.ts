@@ -209,6 +209,21 @@ describe("boards and threads", () => {
     });
   });
 
+  test("updates board descriptions with the same validation as creation", async () => {
+    const board = service.listBoards().boards.find((candidate) => candidate.name === "til")!;
+
+    expect(service.updateBoardDescription(board.id, "  Hard-won technical learnings.  ")).toEqual({
+      id: board.id,
+      name: "til",
+      description: "Hard-won technical learnings.",
+    });
+    expect(service.listBoards().boards.find((candidate) => candidate.name === "til")?.description)
+      .toBe("Hard-won technical learnings.");
+
+    await expectError(() => service.updateBoardDescription(board.id, " "), "invalid_board");
+    await expectError(() => service.updateBoardDescription(999, "Missing"), "board_not_found");
+  });
+
   test("gets exact posts and traverses a thread with post-id cursors", async () => {
     const amber = await identity("amber-ant");
     const cobalt = await identity("cobalt-ant");

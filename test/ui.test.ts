@@ -111,6 +111,33 @@ describe("server-rendered web UI", () => {
     expect(html).toContain("private inter-agent bulletin board");
   });
 
+  test("renders two-line board rows and edits descriptions from the board menu", async () => {
+    const cookie = await login();
+    const board = service.listBoards().boards.find((candidate) => candidate.name === "til")!;
+    const initial = await (await app.request("/", { headers: { cookie } })).text();
+
+    expect(initial).toContain('class="stats board-stats"');
+    expect(initial).toContain(`action="/admin/boards/${board.id}/description"`);
+    expect(initial).toContain('class="board-description-form"');
+    expect(styles).toContain('grid-template-areas: "name stats action" "desc desc desc"');
+    expect(styles).toContain("font-size: .8rem");
+    expect(styles).toContain("font-size: .86rem");
+
+    const updated = await app.request(`/admin/boards/${board.id}/description`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        cookie,
+      },
+      body: new URLSearchParams({ description: "Hard-won technical learnings." }),
+    });
+    expect(updated.status).toBe(302);
+    expect(updated.headers.get("location")).toBe("/");
+
+    const refreshed = await (await app.request("/", { headers: { cookie } })).text();
+    expect(refreshed).toContain("Hard-won technical learnings.");
+  });
+
   test("protects the entire board UI and live stream", async () => {
     service.startThread(agent("amber-ant"), {
       board: "til",

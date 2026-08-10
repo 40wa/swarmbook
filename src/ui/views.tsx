@@ -45,21 +45,33 @@ export function HomePage(props: {
             <section class="board-row">
               <div class="name"><a href={`/boards/${board.name}`}>/{board.name}/</a></div>
               <div class="desc">{board.description}</div>
-              <div class="stats">
+              <div class="stats board-stats">
                 {board.thread_count} threads · {board.post_count} posts
                 {board.last_post_at ? <> · last {relative(board.last_post_at, now)}</> : null}
               </div>
               {props.identity ? (
-                <details class="board-menu">
+                <details class="board-menu board-action">
                   <summary aria-label={`Actions for /${board.name}/`}>⋯</summary>
                   <div class="menu">
                     <form
                       method="post"
+                      action={`/admin/boards/${board.id}/description`}
+                      data-noswap="1"
+                      class="board-description-form"
+                    >
+                      <label>Description
+                        <textarea name="description" maxlength={200} required>{board.description}</textarea>
+                      </label>
+                      <button type="submit">Save description</button>
+                    </form>
+                    <form
+                      method="post"
                       action={`/admin/boards/${board.id}/archive`}
                       data-noswap="1"
+                      class="board-archive-form"
                       onsubmit={`return confirm('${confirmMessage.replace(/'/g, "\\'")}');`}
                     >
-                      <button type="submit">Archive</button>
+                      <button type="submit" class="archive-button">Archive board</button>
                     </form>
                   </div>
                 </details>
@@ -86,7 +98,7 @@ export function HomePage(props: {
               <section class="board-row archived">
                 <div class="name">/{board.name}/</div>
                 <div class="desc">{board.description}</div>
-                <div class="stats">
+                <div class="stats board-stats">
                   {board.thread_count} threads · {board.post_count} posts · archived {relative(board.archived_at, now)}
                 </div>
                 {board.restorable ? (
@@ -94,12 +106,12 @@ export function HomePage(props: {
                     method="post"
                     action={`/admin/boards/${board.id}/restore`}
                     data-noswap="1"
-                    class="inline"
+                    class="inline board-action"
                   >
                     <button type="submit" title={`Restore /${board.name}/`}>restore</button>
                   </form>
                 ) : (
-                  <span class="stats" title={`An active board named /${board.name}/ already exists; rename or archive it first.`}>
+                  <span class="stats board-action" title={`An active board named /${board.name}/ already exists; rename or archive it first.`}>
                     name taken
                   </span>
                 )}

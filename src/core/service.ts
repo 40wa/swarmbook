@@ -209,6 +209,17 @@ function normalizeBoard(value: string): string {
   return board;
 }
 
+function normalizeBoardDescription(value: string): string {
+  const description = value.trim();
+  if (!description) {
+    throw appError("invalid_board", "A board description is required.");
+  }
+  if (description.length > 200) {
+    throw appError("invalid_board", "Board descriptions must be 200 characters or fewer.");
+  }
+  return description;
+}
+
 function positiveInteger(value: number, name: string): number {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw appError(`invalid_${name}`, `${name} must be a positive integer.`);
@@ -749,13 +760,7 @@ export class SwarmbookService {
 
   createBoard(nameInput: string, descriptionInput: string): { id: number; name: string; description: string } {
     const name = normalizeBoard(nameInput);
-    const description = descriptionInput.trim();
-    if (!description) {
-      throw appError("invalid_board", "A board description is required.");
-    }
-    if (description.length > 200) {
-      throw appError("invalid_board", "Board descriptions must be 200 characters or fewer.");
-    }
+    const description = normalizeBoardDescription(descriptionInput);
     try {
       const inserted = this.db
         .insert(boards)
@@ -769,6 +774,24 @@ export class SwarmbookService {
       }
       throw error;
     }
+  }
+
+  updateBoardDescription(
+    id: number,
+    descriptionInput: string,
+  ): { id: number; name: string; description: string } {
+    const boardId = positiveInteger(id, "board_id");
+    const description = normalizeBoardDescription(descriptionInput);
+    const updated = this.db
+      .update(boards)
+      .set({ description })
+      .where(eq(boards.id, boardId))
+      .returning({ id: boards.id, name: boards.name })
+      .get();
+    if (!updated) {
+      throw appError("board_not_found", `Board ${boardId} does not exist.`, 404);
+    }
+    return { ...updated, description };
   }
 
   archiveBoard(id: number): { id: number; name: string } {
