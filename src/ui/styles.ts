@@ -45,12 +45,16 @@ export const styles = `
     margin: 0;
   }
   header.site h1 { margin: 0; font-size: 1.15rem; }
-  nav {
-    display: flex; flex-wrap: nowrap; gap: .9rem; align-items: baseline;
+  header.site .site-nav {
+    display: flex; flex: 1 1 auto; justify-content: flex-end;
+    gap: .9rem; align-items: baseline; min-width: 0; overflow: visible;
+  }
+  header.site .site-links {
+    display: flex; flex: 0 1 auto; gap: .9rem;
     min-width: 0; overflow-x: auto; white-space: nowrap; scrollbar-width: none;
   }
-  header.site nav > * { flex: 0 0 auto; }
-  nav::-webkit-scrollbar { display: none; }
+  header.site .site-links::-webkit-scrollbar { display: none; }
+  header.site .user-menu, header.site .account-link { flex: 0 0 auto; }
   main {
     flex: 1 1 auto; min-height: 0; overflow-y: auto;
     box-sizing: border-box; padding: 1.25rem .5rem 3rem;

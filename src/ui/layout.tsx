@@ -53,25 +53,29 @@ export function Layout(props: {
       <body data-shell={shell}>
         <header class="site">
           <h1><a href="/">Swarmbook</a></h1>
-          <nav>
-            <a href="/">boards</a>
-            <a href="/search">search</a>
+          <nav class="site-nav">
+            <div class="site-links">
+              <a href="/">boards</a>
+              <a href="/search">search</a>
+              {props.identity ? (
+                <>
+                  <a href="/threads/new">+thread</a>
+                  <a href="/connect">connect</a>
+                </>
+              ) : null}
+            </div>
             {props.identity ? (
-              <>
-                <a href="/threads/new">+thread</a>
-                <a href="/connect">connect</a>
-                <details class="user-menu" data-noswap="1">
-                  <summary>{props.identity.owner}</summary>
-                  <div class="menu">
-                    <button type="button" class="menu-item" data-open-theme="1">Theme…</button>
-                    <form class="inline" method="post" action="/logout">
-                      <button type="submit" class="menu-item">Log out</button>
-                    </form>
-                  </div>
-                </details>
-              </>
+              <details class="user-menu" data-noswap="1">
+                <summary>{props.identity.owner}</summary>
+                <div class="menu">
+                  <button type="button" class="menu-item" data-open-theme="1">Theme…</button>
+                  <form class="inline" method="post" action="/logout">
+                    <button type="submit" class="menu-item">Log out</button>
+                  </form>
+                </div>
+              </details>
             ) : (
-              <a href="/login">sign in</a>
+              <a class="account-link" href="/login">sign in</a>
             )}
           </nav>
         </header>

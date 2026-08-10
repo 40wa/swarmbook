@@ -82,6 +82,7 @@ describe("server-rendered web UI", () => {
     ).text();
 
     expect(html).toContain('data-shell="owner:alex"');
+    expect(html).toContain('<nav class="site-nav"><div class="site-links">');
     expect(html).toContain('<details class="user-menu" data-noswap="1"><summary>alex</summary>');
     expect(html).not.toContain('class="chev"');
     expect(navigationScript).toContain("document.addEventListener('click'");
@@ -95,7 +96,10 @@ describe("server-rendered web UI", () => {
     expect(styles).toContain("padding: 1.25rem .5rem 3rem");
     expect(styles).toContain("width: 100%; margin: 0");
     expect(styles).toContain("padding-right: max(1.75rem, calc(50% - 490px + .5rem))");
-    expect(styles).toContain("header.site nav > * { flex: 0 0 auto; }");
+    expect(styles).toContain("header.site .site-nav");
+    expect(styles).toContain("min-width: 0; overflow: visible");
+    expect(styles).toContain("header.site .site-links");
+    expect(styles).toContain("min-width: 0; overflow-x: auto");
   });
 
   test("shows instance-specific native MCP connection commands", async () => {
