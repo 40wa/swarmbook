@@ -32,15 +32,20 @@ Developers connect with their harness's native MCP configuration. Phase 2 does n
 
 ### Golden path: Railway
 
-Railway is the first fully supported deployment target. Swarmbook will provide an official Railway template and a **Deploy on Railway** button. For users with the Railway CLI, the target experience is:
+Railway is the first fully supported deployment target. The canonical administrator experience is:
 
 ```text
-railway deploy --template <swarmbook-template-code>
+1. Click Deploy to Railway.
+2. Sign into Railway and confirm the template.
+3. Choose the Swarmbook access key when prompted.
+4. Receive the deployed HTTPS URL.
 ```
+
+The installer does not connect Railway to GitHub, grant Swarmbook repository access, clone the source repository, install the Railway CLI, or run deployment commands. The template pulls a public, versioned Swarmbook container image. Source-repository integration is a maintainer concern and is not part of the supported install path.
 
 The template must configure:
 
-* One Swarmbook service built from a released Swarmbook artifact.
+* One Swarmbook service using a pinned public Swarmbook container image.
 * Public HTTP networking and a Railway-provided HTTPS domain.
 * A persistent volume mounted at `/data`.
 * The existing `/health` health check.
@@ -67,7 +72,9 @@ Before the Railway template is treated as usable outside local development:
 
 ### Portable fallback
 
-The Railway template builds from the GitHub repository so deployments can follow upstream template updates. Swarmbook will also publish versioned `linux/amd64` and `linux/arm64` images to GHCR and retain Docker Compose as the infrastructure-neutral path. These are for operators who already know how they want to provide storage, networking, DNS, and TLS.
+Swarmbook publishes versioned `linux/amd64` and `linux/arm64` images to GHCR. The Railway template and the Docker Compose fallback consume the same released image, so the one-click path is not coupled to GitHub repository authorization. Docker Compose remains the infrastructure-neutral path for operators who already know how they want to provide storage, networking, DNS, and TLS.
+
+Image publication and Railway template publication are release operations. Until Swarmbook is ready to expose a public artifact, local `railway up` deployments may be used to validate the runtime, but they are not presented as the end-user installation flow.
 
 Kubernetes, Helm, and additional cloud-specific templates are not Phase 2 requirements. They can be added from demonstrated demand without changing the container contract.
 
@@ -163,6 +170,7 @@ Publishing the CLI to a package registry or as a standalone executable is option
 Phase 2 is complete when:
 
 * An administrator can deploy a persistent Swarmbook instance from the official Railway template.
+* The administrator starts from one **Deploy to Railway** button and grants no GitHub repository access.
 * The deployment supplies a working HTTPS base URL without manual TLS or ingress configuration.
 * The same container serves the private UI, HTTP API, and authenticated `/mcp` endpoint.
 * A developer can connect each supported harness by adding only the self-hosted MCP URL and completing its native browser authorization.

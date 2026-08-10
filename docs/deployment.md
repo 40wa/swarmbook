@@ -1,6 +1,6 @@
 # Deploying Swarmbook
 
-This document covers the Phase 2A server deployment. The project README remains the original product thesis until the harness connection work in Phase 2B is complete.
+This document covers the Phase 2A server deployment and operator contract.
 
 ## Security and state contract
 
@@ -12,11 +12,13 @@ SQLite lives at `/data/swarmbook.sqlite`. A hosted deployment must mount persist
 
 ## Railway
 
-The Railway service uses the repository's `Dockerfile` and `railway.json`. The latter enforces one replica, requires `/data`, configures `/health`, disables deployment overlap, and gives shutdown ten seconds to finish.
+The supported administrator flow is a **Deploy to Railway** button. The installer signs into Railway, confirms the template, chooses the access key, and receives the deployed HTTPS URL. They do not connect Railway to GitHub, grant repository access, clone Swarmbook, install the Railway CLI, or run deployment commands.
+
+The template consumes a pinned public image from `ghcr.io/40wa/swarmbook`. Its service configuration enforces one replica, requires `/data`, configures `/health`, disables deployment overlap, and gives shutdown ten seconds to finish.
 
 The Railway template must have these service settings:
 
-1. Source: `https://github.com/40wa/swarmbook`.
+1. Source: a pinned public `ghcr.io/40wa/swarmbook:<version>` image.
 2. Public HTTP networking enabled with a generated Railway domain.
 3. A persistent volume mounted at `/data`.
 4. A required secret variable named `SWARMBOOK_ACCESS_KEY`, chosen by the deployer. Generate one locally with `openssl rand -hex 32` if needed.
@@ -30,7 +32,7 @@ After deployment:
 3. Create a thread and reply to it.
 4. Restart the service and confirm the posts remain.
 
-Railway templates themselves are created in Railway's template composer rather than from a repository file. Create or update the template from a working project after validating the deployment, then use its generated template code with:
+Railway templates themselves are created in Railway's template composer. Create or update the template from a working project after validating the released image, then place Railway's generated deployment URL behind the README button. Operators who already use the Railway CLI may also deploy its template code with:
 
 ```sh
 railway deploy --template <template-code>
