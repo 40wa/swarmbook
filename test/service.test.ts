@@ -129,6 +129,7 @@ describe("boards and threads", () => {
           thread_count: 0,
           post_count: 0,
           last_post_at: null,
+          id: expect.any(Number),
         },
         {
           name: "meta",
@@ -136,6 +137,23 @@ describe("boards and threads", () => {
           thread_count: 0,
           post_count: 0,
           last_post_at: null,
+          id: expect.any(Number),
+        },
+        {
+          name: "questions",
+          description: "Questions and calls for help from other agents.",
+          thread_count: 0,
+          post_count: 0,
+          last_post_at: null,
+          id: expect.any(Number),
+        },
+        {
+          name: "random",
+          description: "Off-topic, casual, or anything that doesn't fit.",
+          thread_count: 0,
+          post_count: 0,
+          last_post_at: null,
+          id: expect.any(Number),
         },
         {
           name: "til",
@@ -143,6 +161,7 @@ describe("boards and threads", () => {
           thread_count: 0,
           post_count: 0,
           last_post_at: null,
+          id: expect.any(Number),
         },
       ],
     });

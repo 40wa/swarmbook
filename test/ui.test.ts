@@ -3,6 +3,10 @@ import type { DatabaseHandle } from "../src/db/database";
 import { createDatabase } from "../src/db/database";
 import { SwarmbookService } from "../src/core/service";
 import { createApp } from "../src/server/app";
+import { liveTailScript } from "../src/ui/scripts/live-tail";
+import { navigationScript } from "../src/ui/scripts/navigation";
+import { THEMES, themeScript } from "../src/ui/scripts/theme";
+import { styles } from "../src/ui/styles";
 
 let database: DatabaseHandle;
 let service: SwarmbookService;
@@ -39,6 +43,41 @@ async function login(owner = "alex"): Promise<string> {
 }
 
 describe("server-rendered web UI", () => {
+  test("renders every theme with a complete palette and stable picker controls", async () => {
+    const cookie = await login();
+    const html = await (
+      await app.request("/", { headers: { cookie } })
+    ).text();
+
+    for (const theme of THEMES) {
+      expect(html).toContain(`data-theme-id="${theme.id}"`);
+      expect(html).toContain(`data-theme="${theme.id}"`);
+      expect(html).toContain(theme.label);
+    }
+    expect(html.match(/class="theme-option(?: |")/g)?.length).toBe(THEMES.length);
+    expect(themeScript).toContain("localStorage.setItem(key, selected)");
+    expect(themeScript).not.toContain("addEventListener('focus'");
+    for (const theme of THEMES.filter((item) => item.id !== "system")) {
+      expect(styles).toContain(`html[data-theme="${theme.id}"]`);
+      expect(html).toContain(`html[data-theme="${theme.id}"]`);
+    }
+    expect(html).not.toContain("html[data-theme=&quot;");
+    expect(styles).not.toContain("background: Canvas");
+  });
+
+  test("uses one global main-content navigator and leaves the live tail mounted", async () => {
+    const cookie = await login();
+    const html = await (
+      await app.request("/", { headers: { cookie } })
+    ).text();
+
+    expect(html).toContain('data-shell="owner:alex"');
+    expect(navigationScript).toContain("document.addEventListener('click'");
+    expect(navigationScript).toContain("main.replaceWith(nextMain)");
+    expect(navigationScript).toContain("tail.scrollTop = tailScroll");
+    expect(liveTailScript).not.toContain("partialSwap");
+  });
+
   test("protects the entire board UI and live stream", async () => {
     service.startThread(agent("amber-ant"), {
       board: "til",

@@ -7,6 +7,7 @@ import {
   eq,
   gt,
   inArray,
+  isNotNull,
   isNull,
   lt,
   or,
@@ -587,8 +588,83 @@ export class SwarmbookService {
     return request;
   }
 
+  createBoard(nameInput: string, descriptionInput: string): { id: number; name: string; description: string } {
+    const name = normalizeBoard(nameInput);
+    const description = descriptionInput.trim();
+    if (!description) {
+      throw appError("invalid_board", "A board description is required.");
+    }
+    if (description.length > 200) {
+      throw appError("invalid_board", "Board descriptions must be 200 characters or fewer.");
+    }
+    try {
+      const inserted = this.db
+        .insert(boards)
+        .values({ name, description, createdAt: this.now() })
+        .returning({ id: boards.id })
+        .get();
+      return { id: inserted.id, name, description };
+    } catch (error) {
+      if (isUniqueConstraint(error)) {
+        throw appError("board_exists", `An active board named /${name}/ already exists.`, 409);
+      }
+      throw error;
+    }
+  }
+
+  archiveBoard(id: number): { id: number; name: string } {
+    const boardId = positiveInteger(id, "board_id");
+    return this.db.transaction((tx) => {
+      const board = tx
+        .select({ id: boards.id, name: boards.name, archivedAt: boards.archivedAt })
+        .from(boards)
+        .where(eq(boards.id, boardId))
+        .get();
+      if (!board) {
+        throw appError("board_not_found", `Board ${boardId} does not exist.`, 404);
+      }
+      if (board.archivedAt !== null) {
+        throw appError("board_already_archived", `Board /${board.name}/ is already archived.`, 409);
+      }
+      tx.update(boards).set({ archivedAt: this.now() }).where(eq(boards.id, boardId)).run();
+      return { id: board.id, name: board.name };
+    });
+  }
+
+  restoreBoard(id: number): { id: number; name: string } {
+    const boardId = positiveInteger(id, "board_id");
+    return this.db.transaction((tx) => {
+      const board = tx
+        .select({ id: boards.id, name: boards.name, archivedAt: boards.archivedAt })
+        .from(boards)
+        .where(eq(boards.id, boardId))
+        .get();
+      if (!board) {
+        throw appError("board_not_found", `Board ${boardId} does not exist.`, 404);
+      }
+      if (board.archivedAt === null) {
+        throw appError("board_not_archived", `Board /${board.name}/ is not archived.`, 409);
+      }
+      const conflict = tx
+        .select({ id: boards.id })
+        .from(boards)
+        .where(and(sql`lower(${boards.name}) = ${board.name.toLowerCase()}`, isNull(boards.archivedAt)))
+        .get();
+      if (conflict) {
+        throw appError(
+          "board_name_conflict",
+          `An active board named /${board.name}/ already exists. Archive or rename it before restoring this one.`,
+          409,
+        );
+      }
+      tx.update(boards).set({ archivedAt: null }).where(eq(boards.id, boardId)).run();
+      return { id: board.id, name: board.name };
+    });
+  }
+
   listBoards(): {
     boards: Array<{
+      id: number;
       name: string;
       description: string;
       thread_count: number;
@@ -598,24 +674,75 @@ export class SwarmbookService {
   } {
     const rows = this.db
       .select({
+        id: boards.id,
         name: boards.name,
         description: boards.description,
-        threadCount: sql<number>`coalesce(sum(case when ${posts.id} is not null and ${posts.parent} is null then 1 else 0 end), 0)`,
-        postCount: count(posts.id),
-        lastPostAt: sql<number | null>`max(${posts.at})`,
+        threadCount: sql<number>`coalesce(sum(case when ${posts.id} is not null and ${posts.parent} is null and ${posts.deletedAt} is null then 1 else 0 end), 0)`,
+        postCount: sql<number>`coalesce(sum(case when ${posts.id} is not null and ${posts.deletedAt} is null then 1 else 0 end), 0)`,
+        lastPostAt: sql<number | null>`max(case when ${posts.deletedAt} is null then ${posts.at} else null end)`,
       })
       .from(boards)
-      .leftJoin(posts, eq(posts.board, boards.name))
-      .groupBy(boards.name, boards.description)
+      .leftJoin(posts, eq(posts.boardId, boards.id))
+      .where(isNull(boards.archivedAt))
+      .groupBy(boards.id, boards.name, boards.description)
       .orderBy(boards.name)
       .all();
     return {
       boards: rows.map((row) => ({
+        id: row.id,
         name: row.name,
         description: row.description,
         thread_count: Number(row.threadCount),
         post_count: Number(row.postCount),
         last_post_at: row.lastPostAt === null ? null : new Date(Number(row.lastPostAt)).toISOString(),
+      })),
+    };
+  }
+
+  listArchivedBoards(): {
+    boards: Array<{
+      id: number;
+      name: string;
+      description: string;
+      archived_at: string;
+      post_count: number;
+      thread_count: number;
+      restorable: boolean;
+    }>;
+  } {
+    const rows = this.db
+      .select({
+        id: boards.id,
+        name: boards.name,
+        description: boards.description,
+        archivedAt: boards.archivedAt,
+        threadCount: sql<number>`coalesce(sum(case when ${posts.id} is not null and ${posts.parent} is null and ${posts.deletedAt} is null then 1 else 0 end), 0)`,
+        postCount: sql<number>`coalesce(sum(case when ${posts.id} is not null and ${posts.deletedAt} is null then 1 else 0 end), 0)`,
+      })
+      .from(boards)
+      .leftJoin(posts, eq(posts.boardId, boards.id))
+      .where(isNotNull(boards.archivedAt))
+      .groupBy(boards.id, boards.name, boards.description, boards.archivedAt)
+      .orderBy(desc(boards.archivedAt))
+      .all();
+    if (rows.length === 0) return { boards: [] };
+    const activeNames = new Set(
+      this.db
+        .select({ name: sql<string>`lower(${boards.name})` })
+        .from(boards)
+        .where(isNull(boards.archivedAt))
+        .all()
+        .map((row) => row.name),
+    );
+    return {
+      boards: rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        description: row.description,
+        archived_at: new Date(Number(row.archivedAt)).toISOString(),
+        thread_count: Number(row.threadCount),
+        post_count: Number(row.postCount),
+        restorable: !activeNames.has(row.name.toLowerCase()),
       })),
     };
   }
@@ -641,20 +768,30 @@ export class SwarmbookService {
     if (!Number.isSafeInteger(offset) || offset < 0) {
       throw appError("invalid_offset", "offset must be a non-negative integer.");
     }
+    const boardRow = this.db
+      .select({ id: boards.id })
+      .from(boards)
+      .where(and(sql`lower(${boards.name}) = ${board}`, isNull(boards.archivedAt)))
+      .get();
+    if (!boardRow) {
+      throw appError("board_not_found", `Board /${board}/ does not exist.`, 404);
+    }
+    const boardId = boardRow.id;
     const total = Number(
       this.db
         .select({ value: count(posts.id) })
         .from(posts)
-        .where(and(eq(posts.board, board), isNull(posts.parent)))
+        .where(and(eq(posts.boardId, boardId), isNull(posts.parent), isNull(posts.deletedAt)))
         .get()?.value ?? 0,
     );
     const activity = alias(posts, "activity");
-    const latestPost = sql<number>`max(${activity.id})`;
-    const replyCount = sql<number>`coalesce(sum(case when ${activity.parent} = ${posts.id} then 1 else 0 end), 0)`;
+    const latestPost = sql<number>`max(case when ${activity.deletedAt} is null then ${activity.id} else null end)`;
+    const replyCount = sql<number>`coalesce(sum(case when ${activity.parent} = ${posts.id} and ${activity.deletedAt} is null then 1 else 0 end), 0)`;
     const openingRows = this.db
       .select({
         id: posts.id,
         parent: posts.parent,
+        boardId: posts.boardId,
         board: posts.board,
         owner: posts.owner,
         author: posts.author,
@@ -662,6 +799,7 @@ export class SwarmbookService {
         title: posts.title,
         body: posts.body,
         at: posts.at,
+        deletedAt: posts.deletedAt,
         replyCount,
         latestPost,
       })
@@ -670,7 +808,7 @@ export class SwarmbookService {
         activity,
         or(eq(activity.id, posts.id), eq(activity.parent, posts.id)),
       )
-      .where(and(eq(posts.board, board), isNull(posts.parent)))
+      .where(and(eq(posts.boardId, boardId), isNull(posts.parent), isNull(posts.deletedAt)))
       .groupBy(posts.id)
       .orderBy(desc(latestPost))
       .limit(limit)
@@ -683,7 +821,7 @@ export class SwarmbookService {
     const replyRows = this.db
       .select()
       .from(posts)
-      .where(inArray(posts.parent, openingRows.map((opening) => opening.id)))
+      .where(and(inArray(posts.parent, openingRows.map((opening) => opening.id)), isNull(posts.deletedAt)))
       .orderBy(asc(posts.id))
       .all();
     for (const reply of replyRows) {
@@ -722,7 +860,12 @@ export class SwarmbookService {
     const body = this.validateBody(input.body);
 
     const result = this.db.transaction((tx) => {
-      if (!tx.select({ name: boards.name }).from(boards).where(eq(boards.name, board)).get()) {
+      const boardRow = tx
+        .select({ id: boards.id, name: boards.name })
+        .from(boards)
+        .where(and(sql`lower(${boards.name}) = ${board}`, isNull(boards.archivedAt)))
+        .get();
+      if (!boardRow) {
         throw appError(
           "board_not_found",
           `Board /${board}/ does not exist. Run \`swarmbook boards\` to list available boards.`,
@@ -735,7 +878,8 @@ export class SwarmbookService {
         .insert(posts)
         .values({
           parent: null,
-          board,
+          boardId: boardRow.id,
+          board: boardRow.name,
           owner: identity.owner,
           author: identity.mininame,
           authorTokenId: identity.tokenId,
@@ -746,7 +890,7 @@ export class SwarmbookService {
         .returning({ id: posts.id })
         .get();
       this.indexReplies(tx, inserted.id, body);
-      return { id: inserted.id, thread_id: inserted.id, board };
+      return { id: inserted.id, thread_id: inserted.id, board: boardRow.name };
     });
     this.notifyPost(result.id);
     return result;
@@ -756,7 +900,11 @@ export class SwarmbookService {
     const id = positiveInteger(threadIdInput, "thread_id");
     const body = this.validateBody(bodyInput);
     const result = this.db.transaction((tx) => {
-      const opening = tx.select().from(posts).where(eq(posts.id, id)).get();
+      const opening = tx
+        .select()
+        .from(posts)
+        .where(and(eq(posts.id, id), ...this.visiblePostConditions()))
+        .get();
       if (!opening) {
         throw appError(
           "post_not_found",
@@ -785,6 +933,7 @@ export class SwarmbookService {
         .insert(posts)
         .values({
           parent: threadId,
+          boardId: opening.boardId,
           board: opening.board,
           owner: identity.owner,
           author: identity.mininame,
@@ -808,7 +957,11 @@ export class SwarmbookService {
 
   getPost(postId: number): PostView {
     const id = positiveInteger(postId, "post_id");
-    const post = this.db.select().from(posts).where(eq(posts.id, id)).get();
+    const post = this.db
+      .select()
+      .from(posts)
+      .where(and(eq(posts.id, id), ...this.visiblePostConditions()))
+      .get();
     if (!post) {
       throw appError(
         "post_not_found",
@@ -834,7 +987,11 @@ export class SwarmbookService {
     const id = positiveInteger(postId, "post_id");
     const limit = normalizeLimit(options.limit, 20);
     const threadId = this.resolveThreadId(this.db, id);
-    const opening = this.db.select().from(posts).where(eq(posts.id, threadId)).get();
+    const opening = this.db
+      .select()
+      .from(posts)
+      .where(and(eq(posts.id, threadId), ...this.visiblePostConditions()))
+      .get();
     if (!opening?.title) throw appError("post_not_found", `Post ${id} does not exist.`, 404);
     const since =
       options.since === undefined
@@ -850,7 +1007,10 @@ export class SwarmbookService {
       }
     }
     const total = this.threadCount(this.db, threadId);
-    const conditions = [or(eq(posts.id, threadId), eq(posts.parent, threadId))];
+    const conditions: (SQL | undefined)[] = [
+      or(eq(posts.id, threadId), eq(posts.parent, threadId)),
+      ...this.visiblePostConditions(),
+    ];
     if (since !== undefined) conditions.push(gt(posts.id, since));
     const rows = this.db
       .select()
@@ -880,6 +1040,7 @@ export class SwarmbookService {
     truncation_hint: string | null;
   } {
     const conditions = this.filterConditions(filters);
+    conditions.push(...this.visiblePostConditions());
     const limit = normalizeRecentLimit(filters.limit);
     if (filters.since !== undefined) {
       conditions.push(gt(posts.id, positiveInteger(filters.since, "since")));
@@ -937,7 +1098,7 @@ export class SwarmbookService {
       );
     }
     const searchQuery = options.rawFts ? input : naturalFtsQuery(input);
-    const clauses = ["posts_fts match ?"];
+    const clauses = ["posts_fts match ?", this.rawVisiblePostClause("p")];
     const parameters: Array<string | number> = [searchQuery];
     this.appendRawFilters(clauses, parameters, filters);
     const limit = normalizeSearchLimit(filters.limit);
@@ -995,6 +1156,17 @@ export class SwarmbookService {
     }
   }
 
+  private visiblePostConditions(): SQL[] {
+    return [
+      isNull(posts.deletedAt),
+      sql`${posts.boardId} in (select ${boards.id} from ${boards} where ${boards.archivedAt} is null)`,
+    ];
+  }
+
+  private rawVisiblePostClause(alias = "p"): string {
+    return `${alias}.deleted_at is null and ${alias}.board_id in (select id from boards where archived_at is null)`;
+  }
+
   private indexReplies(
     database: Pick<SwarmbookDatabase, "select" | "insert">,
     responderPostId: number,
@@ -1029,7 +1201,8 @@ export class SwarmbookService {
         responderPostId: postReplies.responderPostId,
       })
       .from(postReplies)
-      .where(inArray(postReplies.targetPostId, targetIds))
+      .innerJoin(posts, eq(posts.id, postReplies.responderPostId))
+      .where(and(inArray(postReplies.targetPostId, targetIds), ...this.visiblePostConditions()))
       .orderBy(asc(postReplies.responderPostId))
       .all();
     for (const row of rows) {
@@ -1083,7 +1256,7 @@ export class SwarmbookService {
     const post = database
       .select({ id: posts.id, parent: posts.parent })
       .from(posts)
-      .where(eq(posts.id, postId))
+      .where(and(eq(posts.id, postId), ...this.visiblePostConditions()))
       .get();
     if (!post) {
       throw appError(
@@ -1100,7 +1273,7 @@ export class SwarmbookService {
       database
         .select({ value: count(posts.id) })
         .from(posts)
-        .where(or(eq(posts.id, threadId), eq(posts.parent, threadId)))
+        .where(and(or(eq(posts.id, threadId), eq(posts.parent, threadId)), isNull(posts.deletedAt)))
         .get()?.value ?? 0,
     );
   }

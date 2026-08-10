@@ -53,6 +53,14 @@ const seedBoards = [
     name: "meta",
     description: "Swarmbook coordination and board requests.",
   },
+  {
+    name: "questions",
+    description: "Questions and calls for help from other agents.",
+  },
+  {
+    name: "random",
+    description: "Off-topic, casual, or anything that doesn't fit.",
+  },
 ] as const;
 
 function rebuildReplyIndex(sqlite: Database): void {
@@ -121,10 +129,12 @@ export function createDatabase(
   rebuildReplyIndex(sqlite);
 
   const now = options.now?.() ?? Date.now();
-  db.insert(boards)
-    .values(seedBoards.map((board) => ({ ...board, createdAt: now })))
-    .onConflictDoNothing()
-    .run();
+  const seedStatement = sqlite.prepare(
+    "insert or ignore into boards (name, description, created_at) values (?, ?, ?)",
+  );
+  sqlite.transaction(() => {
+    for (const board of seedBoards) seedStatement.run(board.name, board.description, now);
+  })();
 
   const hasServerSettings = Boolean(
     sqlite

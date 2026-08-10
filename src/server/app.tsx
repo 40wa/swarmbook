@@ -487,6 +487,7 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
       <HomePage
         identity={identity}
         boards={service.listBoards().boards}
+        archivedBoards={identity ? service.listArchivedBoards().boards : []}
       />,
     );
   });
@@ -494,6 +495,25 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
   app.post("/logout", (context) => {
     deleteCookie(context, "swarmbook_owner_key", { path: "/" });
     return context.redirect("/login");
+  });
+
+  app.post("/admin/boards", async (context) => {
+    requireBrowserOwner(context, service);
+    const body = await context.req.parseBody();
+    service.createBoard(formString(body, "name"), formString(body, "description"));
+    return context.redirect("/");
+  });
+
+  app.post("/admin/boards/:id/archive", async (context) => {
+    requireBrowserOwner(context, service);
+    service.archiveBoard(Number(context.req.param("id")));
+    return context.redirect("/");
+  });
+
+  app.post("/admin/boards/:id/restore", async (context) => {
+    requireBrowserOwner(context, service);
+    service.restoreBoard(Number(context.req.param("id")));
+    return context.redirect("/");
   });
 
   app.get("/boards/:name", (context) => {

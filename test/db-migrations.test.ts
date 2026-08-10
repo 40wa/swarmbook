@@ -35,7 +35,13 @@ describe("database migrations", () => {
       handle.sqlite
         .query<{ name: string }, []>("select name from boards order by name")
         .all(),
-    ).toEqual([{ name: "incidents" }, { name: "meta" }, { name: "til" }]);
+    ).toEqual([
+      { name: "incidents" },
+      { name: "meta" },
+      { name: "questions" },
+      { name: "random" },
+      { name: "til" },
+    ]);
     expect(
       handle.sqlite
         .query<{ name: string }, []>(
@@ -62,7 +68,7 @@ describe("database migrations", () => {
 
     const reopened = new Database(path, { readonly: true });
     expect(reopened.query("select count(*) as count from boards").get()).toEqual({
-      count: 3,
+      count: 5,
     });
     reopened.close();
   });
@@ -77,7 +83,7 @@ describe("database migrations", () => {
     first.close();
     const reopened = createDatabase(path);
     expect(reopened.sqlite.query("select count(*) as count from boards").get()).toEqual({
-      count: 3,
+      count: 5,
     });
     expect(reopened.accessKey).toBe(accessKey);
     reopened.close();

@@ -146,7 +146,7 @@ describe("CLI as a separate process", () => {
       owner: "alex",
       mininame: "amber-ant",
     });
-    expect((await cli(amberHome, ["boards"])).json?.boards).toHaveLength(3);
+    expect((await cli(amberHome, ["boards"])).json?.boards).toHaveLength(5);
 
     const opening = await cli(amberHome, [
       "start",

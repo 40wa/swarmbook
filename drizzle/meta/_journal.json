@@ -50,6 +50,13 @@
       "when": 1786321572379,
       "tag": "0006_material_boomerang",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1786400000000,
+      "tag": "0007_board_ids_and_soft_delete",
+      "breakpoints": true
     }
   ]
 }

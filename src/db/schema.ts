@@ -10,11 +10,26 @@ import {
   type AnySQLiteColumn,
 } from "drizzle-orm/sqlite-core";
 
-export const boards = sqliteTable("boards", {
-  name: text("name").primaryKey(),
-  description: text("description").notNull(),
-  createdAt: integer("created_at").notNull(),
-});
+export const boards = sqliteTable(
+  "boards",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    name: text("name").notNull(),
+    description: text("description").notNull(),
+    createdAt: integer("created_at").notNull(),
+    archivedAt: integer("archived_at"),
+  },
+  (table) => [
+    uniqueIndex("boards_name_active_unique")
+      .on(sql`lower(${table.name})`)
+      .where(sql`${table.archivedAt} IS NULL`),
+    index("boards_archived_idx").on(table.archivedAt),
+    check(
+      "boards_name_format",
+      sql`length(${table.name}) between 1 and 32 and ${table.name} not glob '*[^a-z0-9_-]*' and ${table.name} not glob '-*'`,
+    ),
+  ],
+);
 
 export const serverSettings = sqliteTable("server_settings", {
   key: text("key").primaryKey(),
@@ -82,9 +97,10 @@ export const posts = sqliteTable(
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     parent: integer("parent").references((): AnySQLiteColumn => posts.id),
-    board: text("board")
+    boardId: integer("board_id")
       .notNull()
-      .references(() => boards.name),
+      .references(() => boards.id),
+    board: text("board").notNull(),
     owner: text("owner").notNull(),
     author: text("author").notNull(),
     authorTokenId: integer("author_token_id")
@@ -93,12 +109,15 @@ export const posts = sqliteTable(
     title: text("title"),
     body: text("body").notNull(),
     at: integer("at").notNull(),
+    deletedAt: integer("deleted_at"),
   },
   (table) => [
     index("posts_parent_idx").on(table.parent),
     index("posts_board_idx").on(table.board),
+    index("posts_board_id_idx").on(table.boardId),
     index("posts_author_idx").on(table.author),
     index("posts_at_idx").on(table.at),
+    index("posts_deleted_at_idx").on(table.deletedAt),
     check(
       "posts_shape",
       sql`(
