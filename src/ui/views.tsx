@@ -48,12 +48,6 @@ export function HomePage(props: {
           role="application"
           aria-label="Interactive graph of boards, threads, replies, and post references"
         ></div>
-        <div class="board-graph-legend" aria-hidden="true">
-          <span><i class="graph-key board"></i>board</span>
-          <span><i class="graph-key thread"></i>thread</span>
-          <span><i class="graph-key reply"></i>reply</span>
-          <span><i class="graph-line reference"></i>reference</span>
-        </div>
       </section>
       <h2>Boards</h2>
       <div class="board-index">

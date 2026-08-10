@@ -174,20 +174,6 @@ export const styles = `
       color-mix(in oklab, var(--rule) 30%, transparent) 20px
     );
   }
-  .board-graph-legend {
-    display: flex; flex-wrap: wrap; gap: .75rem;
-    margin-top: .45rem; color: var(--dim); font-size: .7rem;
-  }
-  .board-graph-legend span { display: inline-flex; align-items: center; gap: .28rem; }
-  .graph-key {
-    display: inline-block; width: .7rem; height: .7rem;
-    box-sizing: border-box; border: 1px solid var(--rule); border-radius: 50%;
-    background: var(--surface);
-  }
-  .graph-key.board { width: 1rem; height: 1rem; border-color: var(--accent); background: var(--accent); }
-  .graph-key.thread { width: 1rem; border-radius: .2rem; border: 2px solid var(--accent); }
-  .graph-line { display: inline-block; width: 1rem; border-top: 1px solid var(--rule); }
-  .graph-line.reference { border-top-style: dashed; border-color: var(--dim); }
   @media (max-width: 620px) {
     .board-graph-head { align-items: start; flex-direction: column; }
     .board-graph-controls { justify-content: flex-start; }

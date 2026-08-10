@@ -55,31 +55,55 @@ export const graphScript = `
     return 'hsla(' + hue + ', 58%, 64%, .82)';
   }
 
-  function familyGravity(strength) {
-    var nodes = [];
-    function force(alpha) {
-      var centers = {};
-      nodes.forEach(function (node) {
-        if (node.kind === 'board') centers[node.board] = node;
-      });
-      nodes.forEach(function (node) {
-        if (node.kind === 'board') return;
-        var center = centers[node.board];
-        if (!center) return;
-        node.vx += (center.x - node.x) * strength * alpha;
-        node.vy += (center.y - node.y) * strength * alpha;
-      });
-    }
-    force.initialize = function (nextNodes) { nodes = nextNodes || []; };
-    return force;
+  function nodeRadius(node) {
+    if (node.kind === 'board') return 33;
+    if (node.kind === 'thread') return 10;
+    return 6;
   }
 
-  function globalGravity(strength) {
+  function shortRangeRepulsion(strength, padding) {
     var nodes = [];
     function force(alpha) {
-      nodes.forEach(function (node) {
-        node.vx += -node.x * strength * alpha;
-        node.vy += -node.y * strength * alpha;
+      var cellSize = 90;
+      var buckets = {};
+      nodes.forEach(function (node, index) {
+        var cellX = Math.floor(node.x / cellSize);
+        var cellY = Math.floor(node.y / cellSize);
+        var key = cellX + ':' + cellY;
+        if (!buckets[key]) buckets[key] = [];
+        buckets[key].push(index);
+      });
+
+      nodes.forEach(function (node, index) {
+        var cellX = Math.floor(node.x / cellSize);
+        var cellY = Math.floor(node.y / cellSize);
+        for (var offsetX = -1; offsetX <= 1; offsetX += 1) {
+          for (var offsetY = -1; offsetY <= 1; offsetY += 1) {
+            var neighbours = buckets[(cellX + offsetX) + ':' + (cellY + offsetY)] || [];
+            neighbours.forEach(function (otherIndex) {
+              if (otherIndex <= index) return;
+              var other = nodes[otherIndex];
+              var dx = other.x - node.x;
+              var dy = other.y - node.y;
+              var distanceSquared = dx * dx + dy * dy;
+              if (distanceSquared === 0) {
+                dx = ((index * 17 + otherIndex * 13) % 11 - 5) * .01 || .01;
+                dy = ((index * 23 + otherIndex * 19) % 13 - 6) * .01 || .01;
+                distanceSquared = dx * dx + dy * dy;
+              }
+              var minimumDistance = nodeRadius(node) + nodeRadius(other) + padding;
+              if (distanceSquared >= minimumDistance * minimumDistance) return;
+              var distance = Math.sqrt(distanceSquared);
+              var impulse = (minimumDistance - distance) / minimumDistance * strength * alpha;
+              var forceX = dx / distance * impulse;
+              var forceY = dy / distance * impulse;
+              node.vx -= forceX;
+              node.vy -= forceY;
+              other.vx += forceX;
+              other.vy += forceY;
+            });
+          }
+        }
       });
     }
     force.initialize = function (nextNodes) { nodes = nextNodes || []; };
@@ -214,6 +238,7 @@ export const graphScript = `
     var reset = shell.querySelector('[data-graph-reset]');
     var palette = colours();
     var data = graphData(payload);
+    var cameraTick = 0;
 
     function nodeColour(node) {
       return familyColour(node.familyHue, node.kind);
@@ -225,6 +250,16 @@ export const graphScript = `
     function sizeGraph() {
       if (!graph || graphContainer !== container) return;
       graph.width(container.clientWidth).height(container.clientHeight);
+    }
+    function followCentroid() {
+      cameraTick += 1;
+      if (!graph || cameraTick % 4 !== 0 || data.nodes.length === 0) return;
+      var centroid = data.nodes.reduce(function (sum, node) {
+        sum.x += node.x;
+        sum.y += node.y;
+        return sum;
+      }, { x: 0, y: 0 });
+      graph.centerAt(centroid.x / data.nodes.length, centroid.y / data.nodes.length, 0);
     }
 
     graph = ForceGraph()(container)
@@ -264,6 +299,7 @@ export const graphScript = `
       .linkLineDash(function (link) { return link.kind === 'reference' ? [3, 4] : null; })
       .onNodeClick(function (node) { location.assign(node.url); })
       .onNodeDragEnd(function () { graph.d3ReheatSimulation(); })
+      .onEngineTick(followCentroid)
       .cooldownTicks(Infinity)
       .cooldownTime(Infinity)
       .d3AlphaDecay(.018)
@@ -271,11 +307,7 @@ export const graphScript = `
 
     var charge = graph.d3Force('charge');
     if (charge && charge.strength) {
-      charge.strength(function (node) {
-        if (node.kind === 'board') return -130;
-        if (node.kind === 'thread') return -28;
-        return -9;
-      }).distanceMax(320);
+      charge.strength(1.8).distanceMin(72).distanceMax(320);
     }
     var linkForce = graph.d3Force('link');
     if (linkForce && linkForce.distance) {
@@ -291,10 +323,8 @@ export const graphScript = `
           return .82;
         });
     }
-    graph.d3Force('family-gravity', familyGravity(.032));
-    graph.d3Force('global-gravity', globalGravity(.004));
-    var centerForce = graph.d3Force('center');
-    if (centerForce && centerForce.strength) centerForce.strength(.12);
+    graph.d3Force('near-repulsion', shortRangeRepulsion(2.6, 18));
+    graph.d3Force('center', null);
     graph.d3ReheatSimulation();
     status.textContent = statusText(payload);
 
