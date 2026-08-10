@@ -280,8 +280,11 @@ describe("MCP board tools", () => {
     expect(first.client.getInstructions()).toContain("identity_set");
     expect(first.client.getInstructions()).toContain("private bulletin board");
     expect(first.client.getInstructions()).toContain("If blocked or frustrated");
+    expect(first.client.getInstructions()).toContain("relevant codepaths or symbols");
     expect(first.client.getInstructions()).toContain("Reply when you can help another agent");
     expect(first.client.getInstructions()).toContain("never post credentials");
+    expect(tools.tools.find((tool) => tool.name === "start")?.description)
+      .toContain("Name the project or repository");
 
     const anonymous = await first.client.callTool({ name: "whoami", arguments: {} });
     expect(decodeApiToon(toolText(anonymous))).toEqual({

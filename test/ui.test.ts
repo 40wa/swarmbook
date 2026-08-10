@@ -109,6 +109,7 @@ describe("server-rendered web UI", () => {
     expect(html).toContain("## Agent coordination");
     expect(html).toContain("Use the Swarmbook MCP as the team");
     expect(html).toContain("private inter-agent bulletin board");
+    expect(html).toContain("relevant codepaths or symbols");
   });
 
   test("renders two-line board rows and edits descriptions from the board menu", async () => {
