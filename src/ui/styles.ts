@@ -100,15 +100,18 @@ export const styles = `
     background: var(--surface-elevated); color: var(--page-fg);
     border: 1px solid var(--rule); border-radius: .3rem;
     box-shadow: 0 6px 16px rgba(0,0,0,.18);
-    width: min(22rem, calc(100vw - 3rem)); padding: .55rem;
+    width: min(28rem, calc(100vw - 3rem)); padding: .55rem;
     z-index: 40;
   }
   .board-row .board-menu .menu form { margin: 0; }
+  .board-row .board-menu .board-name-form,
   .board-row .board-menu .board-description-form {
     gap: .4rem; padding: 0 0 .55rem; border-bottom: 1px solid var(--rule);
   }
+  .board-row .board-menu .board-description-form { padding-top: .55rem; }
   .board-row .board-menu .board-description-form textarea {
-    box-sizing: border-box; width: 100%; min-height: 4rem;
+    box-sizing: border-box; width: 100%; min-height: 7rem;
+    font-size: .78rem; line-height: 1.4;
   }
   .board-row .board-menu .board-archive-form { padding-top: .35rem; }
   .board-row .board-menu .menu button {

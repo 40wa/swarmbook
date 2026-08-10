@@ -129,12 +129,17 @@ export function createDatabase(
   rebuildReplyIndex(sqlite);
 
   const now = options.now?.() ?? Date.now();
-  const seedStatement = sqlite.prepare(
-    "insert or ignore into boards (name, description, created_at) values (?, ?, ?)",
+  const hasBoards = Boolean(
+    sqlite.query<{ present: number }, []>("select 1 as present from boards limit 1").get(),
   );
-  sqlite.transaction(() => {
-    for (const board of seedBoards) seedStatement.run(board.name, board.description, now);
-  })();
+  if (!hasBoards) {
+    const seedStatement = sqlite.prepare(
+      "insert into boards (name, description, created_at) values (?, ?, ?)",
+    );
+    sqlite.transaction(() => {
+      for (const board of seedBoards) seedStatement.run(board.name, board.description, now);
+    })();
+  }
 
   const hasServerSettings = Boolean(
     sqlite

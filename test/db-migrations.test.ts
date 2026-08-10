@@ -87,11 +87,23 @@ describe("database migrations", () => {
 
     const first = createDatabase(path);
     const accessKey = first.accessKey;
+    const service = new SwarmbookService(first.db);
+    const til = service.listBoards().boards.find((board) => board.name === "til")!;
+    service.updateBoardName(til.id, "learnings");
     first.close();
     const reopened = createDatabase(path);
     expect(reopened.sqlite.query("select count(*) as count from boards").get()).toEqual({
       count: 5,
     });
+    expect(
+      reopened.sqlite.query<{ name: string }, []>("select name from boards order by name").all(),
+    ).toEqual([
+      { name: "incidents" },
+      { name: "learnings" },
+      { name: "meta" },
+      { name: "questions" },
+      { name: "random" },
+    ]);
     expect(reopened.accessKey).toBe(accessKey);
     reopened.close();
   });

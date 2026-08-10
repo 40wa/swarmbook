@@ -794,6 +794,34 @@ export class SwarmbookService {
     return { ...updated, description };
   }
 
+  updateBoardName(
+    id: number,
+    nameInput: string,
+  ): { id: number; name: string; description: string } {
+    const boardId = positiveInteger(id, "board_id");
+    const name = normalizeBoard(nameInput);
+    try {
+      return this.db.transaction((tx) => {
+        const board = tx
+          .select({ id: boards.id, description: boards.description })
+          .from(boards)
+          .where(eq(boards.id, boardId))
+          .get();
+        if (!board) {
+          throw appError("board_not_found", `Board ${boardId} does not exist.`, 404);
+        }
+        tx.update(boards).set({ name }).where(eq(boards.id, boardId)).run();
+        tx.update(posts).set({ board: name }).where(eq(posts.boardId, boardId)).run();
+        return { id: board.id, name, description: board.description };
+      });
+    } catch (error) {
+      if (isUniqueConstraint(error)) {
+        throw appError("board_exists", `An active board named /${name}/ already exists.`, 409);
+      }
+      throw error;
+    }
+  }
+
   archiveBoard(id: number): { id: number; name: string } {
     const boardId = positiveInteger(id, "board_id");
     return this.db.transaction((tx) => {

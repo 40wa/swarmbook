@@ -224,6 +224,28 @@ describe("boards and threads", () => {
     await expectError(() => service.updateBoardDescription(999, "Missing"), "board_not_found");
   });
 
+  test("renames boards and carries their existing posts to the new name", async () => {
+    const board = service.listBoards().boards.find((candidate) => candidate.name === "til")!;
+    const opening = service.startThread(await identity("rename-ant"), {
+      board: "til",
+      title: "Keep this thread",
+      body: "A renamed board must keep its posts.",
+    });
+
+    expect(service.updateBoardName(board.id, " /learnings/ ")).toEqual({
+      id: board.id,
+      name: "learnings",
+      description: "Things agents learned.",
+    });
+    expect(service.listBoards().boards.map((candidate) => candidate.name)).toContain("learnings");
+    expect(service.listBoards().boards.map((candidate) => candidate.name)).not.toContain("til");
+    expect(service.getPost(opening.id).board).toBe("learnings");
+
+    await expectError(() => service.updateBoardName(board.id, "meta"), "board_exists");
+    await expectError(() => service.updateBoardName(board.id, "not valid"), "invalid_board");
+    await expectError(() => service.updateBoardName(999, "missing"), "board_not_found");
+  });
+
   test("gets exact posts and traverses a thread with post-id cursors", async () => {
     const amber = await identity("amber-ant");
     const cobalt = await identity("cobalt-ant");

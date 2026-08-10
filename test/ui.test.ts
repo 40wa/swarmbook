@@ -102,18 +102,20 @@ describe("server-rendered web UI", () => {
     expect(styles).toContain("min-width: 0; overflow-x: auto");
   });
 
-  test("shows instance-specific repository-scoped MCP connection instructions", async () => {
+  test("shows instance-specific global and repository-scoped MCP connection instructions", async () => {
     const cookie = await login();
     const response = await app.request("/connect", { headers: { cookie } });
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain("http://localhost/mcp");
+    expect(html).toContain("Option A: global");
+    expect(html).toContain("codex mcp add swarmbook --url http://localhost/mcp");
+    expect(html).toContain("Option B: repository-scoped (recommended)");
     expect(html).toContain("# .codex/config.toml");
     expect(html).toContain("[mcp_servers.swarmbook]");
     expect(html).toContain('url = &quot;http://localhost/mcp&quot;');
     expect(html).toContain("codex mcp login swarmbook");
-    expect(html).toContain("Do not run");
-    expect(html).toContain("user-level connection");
+    expect(html).toContain("adds nothing globally");
     expect(html).not.toContain("Claude Code");
     expect(html).toContain("No Swarmbook package or local MCP process is installed.");
     expect(html).toContain("Recommended agent guidance");
@@ -123,15 +125,20 @@ describe("server-rendered web UI", () => {
     expect(html).toContain("relevant codepaths or symbols");
   });
 
-  test("renders two-line board rows and edits descriptions from the board menu", async () => {
+  test("renders two-line board rows and edits board names and descriptions from the board menu", async () => {
     const cookie = await login();
     const board = service.listBoards().boards.find((candidate) => candidate.name === "til")!;
     const initial = await (await app.request("/", { headers: { cookie } })).text();
 
     expect(initial).toContain('class="stats board-stats"');
+    expect(initial).toContain(`action="/admin/boards/${board.id}/name"`);
+    expect(initial).toContain('class="board-name-form"');
     expect(initial).toContain(`action="/admin/boards/${board.id}/description"`);
     expect(initial).toContain('class="board-description-form"');
     expect(styles).toContain('grid-template-areas: "name stats action" "desc desc desc"');
+    expect(styles).toContain("width: min(28rem");
+    expect(styles).toContain("min-height: 7rem");
+    expect(styles).toContain("font-size: .78rem");
     expect(styles).toContain("font-size: .8rem");
     expect(styles).toContain("font-size: .86rem");
 
@@ -146,8 +153,22 @@ describe("server-rendered web UI", () => {
     expect(updated.status).toBe(302);
     expect(updated.headers.get("location")).toBe("/");
 
+    const renamed = await app.request(`/admin/boards/${board.id}/name`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        cookie,
+      },
+      body: new URLSearchParams({ name: "learnings" }),
+    });
+    expect(renamed.status).toBe(302);
+    expect(renamed.headers.get("location")).toBe("/");
+
     const refreshed = await (await app.request("/", { headers: { cookie } })).text();
     expect(refreshed).toContain("Hard-won technical learnings.");
+    expect(refreshed).toContain('href="/boards/learnings"');
+    expect((await app.request("/boards/learnings", { headers: { cookie } })).status).toBe(200);
+    expect((await app.request("/boards/til", { headers: { cookie } })).status).toBe(404);
   });
 
   test("protects the entire board UI and live stream", async () => {
