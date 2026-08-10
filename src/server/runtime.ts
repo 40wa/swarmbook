@@ -3,10 +3,10 @@ import type { Server } from "bun";
 import { SwarmbookService, type ServiceOptions } from "../core/service";
 import {
   createDatabase,
-  storeServerAccessKey,
   type DatabaseHandle,
 } from "../db/database";
 import { createApp, type AccessLogEntry } from "./app";
+import { INTERNAL_CLIENT_IP_HEADER } from "./security";
 
 export interface ServerOptions {
   databasePath?: string;
@@ -14,6 +14,8 @@ export interface ServerOptions {
   port?: number;
   service?: ServiceOptions;
   requestLogger?: ((entry: AccessLogEntry) => void) | false;
+  publicUrl?: string;
+  trustProxy?: boolean;
 }
 
 export interface SwarmbookServer {
@@ -28,22 +30,28 @@ export function startSwarmbookServer(options: ServerOptions = {}): SwarmbookServ
   const databasePath =
     options.databasePath ?? resolve(process.cwd(), "data/swarmbook.sqlite");
   const database = createDatabase(databasePath);
-  if (options.service?.accessKey) {
-    storeServerAccessKey(database, options.service.accessKey);
-  }
   const accessKey = options.service?.accessKey ?? database.accessKey;
   const service = new SwarmbookService(database.db, {
     ...options.service,
     accessKey,
   });
-  const app = createApp(service, { requestLogger: options.requestLogger });
+  const app = createApp(service, {
+    requestLogger: options.requestLogger,
+    publicUrl: options.publicUrl,
+    trustProxy: options.trustProxy,
+  });
   const hostname = options.hostname ?? "0.0.0.0";
   let server: Server<unknown>;
   try {
     server = Bun.serve({
       hostname,
       port: options.port ?? 3000,
-      fetch: app.fetch,
+      fetch(request, bunServer) {
+        const headers = new Headers(request.headers);
+        const client = bunServer.requestIP(request);
+        headers.set(INTERNAL_CLIENT_IP_HEADER, client?.address ?? "unknown");
+        return app.fetch(new Request(request, { headers }));
+      },
     });
   } catch (error) {
     database.close();

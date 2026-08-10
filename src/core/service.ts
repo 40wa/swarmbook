@@ -49,6 +49,7 @@ export interface ServiceOptions {
   accessKey?: string;
   accessKeyHash?: string;
   authorizationTtlMs?: number;
+  authorizationMaxPending?: number;
 }
 
 export interface QueryFilters {
@@ -300,6 +301,7 @@ export class SwarmbookService {
   private readonly writesPerMinute: number;
   private readonly accessKeyHash: string;
   private readonly authorizationTtlMs: number;
+  private readonly authorizationMaxPending: number;
   private readonly subscribers = new Set<(post: PostView) => void>();
   private readonly authorizationRequests = new Map<
     string,
@@ -323,6 +325,7 @@ export class SwarmbookService {
     this.accessKeyHash =
       options.accessKeyHash ?? keyHash(options.accessKey ?? "local-swarmbook");
     this.authorizationTtlMs = options.authorizationTtlMs ?? 10 * 60_000;
+    this.authorizationMaxPending = options.authorizationMaxPending ?? 1_000;
   }
 
   subscribe(listener: (post: PostView) => void): () => void {
@@ -354,30 +357,35 @@ export class SwarmbookService {
       throw appError("invalid_access_key", "The server access key is invalid.", 401);
     }
     const owner = normalizeOwner(requestedOwner);
-    let ownerRow = this.db
+    const ownerRow = this.db
       .select({ id: owners.id, name: owners.name })
       .from(owners)
       .where(sql`lower(${owners.name}) = ${owner}`)
       .get();
-    if (!ownerRow) {
-      ownerRow = this.db
-        .insert(owners)
-        .values({ name: owner, createdAt: this.now() })
-        .returning({ id: owners.id, name: owners.name })
-        .get();
+    if (ownerRow) {
+      throw appError(
+        "owner_taken",
+        `The owner name ${owner} already exists. Use its existing owner credential instead of the access key.`,
+        409,
+      );
     }
+    const createdOwner = this.db
+      .insert(owners)
+      .values({ name: owner, createdAt: this.now() })
+      .returning({ id: owners.id, name: owners.name })
+      .get();
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const key = this.generateKey();
       try {
         this.db
           .insert(ownerCredentials)
           .values({
-            ownerId: ownerRow.id,
+            ownerId: createdOwner.id,
             secretHash: keyHash(key),
             createdAt: this.now(),
           })
           .run();
-        return { owner: ownerRow.name, key };
+        return { owner: createdOwner.name, key };
       } catch (error) {
         if (isUniqueConstraint(error)) continue;
         throw error;
@@ -529,6 +537,14 @@ export class SwarmbookService {
     pollToken: string;
     expiresAt: string;
   } {
+    this.deleteExpiredAuthorizationRequests();
+    if (this.authorizationRequests.size >= this.authorizationMaxPending) {
+      throw appError(
+        "authorization_capacity_reached",
+        "The server has too many pending authorization requests. Wait for an existing request to expire and retry.",
+        503,
+      );
+    }
     const requestId = defaultRequestId();
     const pollToken = this.generateKey();
     const expiresAt = this.now() + this.authorizationTtlMs;
@@ -567,9 +583,19 @@ export class SwarmbookService {
     if (request.pollHash !== keyHash(pollToken)) {
       throw appError("invalid_poll_token", "The authorization poll credential is invalid.", 401);
     }
-    return request.completed
-      ? { status: "complete", ...request.completed }
-      : { status: "pending", expires_at: new Date(request.expiresAt).toISOString() };
+    if (request.completed) {
+      const completed = { status: "complete" as const, ...request.completed };
+      this.authorizationRequests.delete(requestId);
+      return completed;
+    }
+    return { status: "pending", expires_at: new Date(request.expiresAt).toISOString() };
+  }
+
+  private deleteExpiredAuthorizationRequests(): void {
+    const now = this.now();
+    for (const [requestId, request] of this.authorizationRequests) {
+      if (request.expiresAt <= now) this.authorizationRequests.delete(requestId);
+    }
   }
 
   private authorizationRequest(requestId: string) {

@@ -7,6 +7,7 @@ import { SwarmbookService } from "../src/core/service";
 let database: DatabaseHandle;
 let now: number;
 let service: SwarmbookService;
+let ownerCredentialKeys: Map<string, string>;
 
 beforeEach(() => {
   now = Date.parse("2026-08-09T12:00:00.000Z");
@@ -16,13 +17,18 @@ beforeEach(() => {
     threadPostLimit: 3,
     writesPerMinute: 3,
   });
+  ownerCredentialKeys = new Map();
 });
 
 afterEach(() => database.close());
 
 function agentIdentity(target: SwarmbookService, mininame: string, owner = "alex") {
-  const ownerCredential = target.issueOwnerCredential("local-swarmbook", owner);
-  const ownerIdentity = target.authenticateOwner(ownerCredential.key);
+  let ownerKey = ownerCredentialKeys.get(owner);
+  if (!ownerKey) {
+    ownerKey = target.issueOwnerCredential("local-swarmbook", owner).key;
+    ownerCredentialKeys.set(owner, ownerKey);
+  }
+  const ownerIdentity = target.authenticateOwner(ownerKey);
   const agent = target.createAgentIdentity(ownerIdentity, mininame);
   return target.authenticate(agent.key);
 }
@@ -78,6 +84,10 @@ describe("owner and agent authentication", () => {
       "invalid_owner",
     );
     const ownerCredential = service.issueOwnerCredential("local-swarmbook", "alex");
+    await expectError(
+      () => service.issueOwnerCredential("local-swarmbook", "ALEX"),
+      "owner_taken",
+    );
     const owner = service.authenticateOwner(ownerCredential.key);
     await expectError(() => service.createAgentIdentity(owner, "--"), "invalid_handle");
     service.createAgentIdentity(owner, "amber-ant");
@@ -108,7 +118,7 @@ describe("owner and agent authentication", () => {
     });
     await expectError(
       () => service.pollOwnerAuthorization(request.requestId, "wrong"),
-      "invalid_poll_token",
+      "authorization_not_found",
     );
     const expiring = service.beginOwnerAuthorization();
     now += 10 * 60_000;
@@ -116,6 +126,21 @@ describe("owner and agent authentication", () => {
       () => service.pollOwnerAuthorization(expiring.requestId, expiring.pollToken),
       "authorization_expired",
     );
+  });
+
+  test("bounds pending browser authorization state and cleans up expired requests", async () => {
+    const bounded = new SwarmbookService(database.db, {
+      now: () => now,
+      authorizationMaxPending: 2,
+    });
+    bounded.beginOwnerAuthorization();
+    bounded.beginOwnerAuthorization();
+    await expectError(
+      () => bounded.beginOwnerAuthorization(),
+      "authorization_capacity_reached",
+    );
+    now += 10 * 60_000;
+    expect(bounded.beginOwnerAuthorization().requestId).toBeString();
   });
 });
 

@@ -15,7 +15,28 @@ afterEach(() => {
   }
 });
 
-describe("local server lifecycle", () => {
+describe.serial("local server lifecycle", () => {
+  test("does not persist an environment-supplied access key", () => {
+    const directory = mkdtempSync(join(tmpdir(), "swarmbook-server-key-"));
+    directories.push(directory);
+    const configuredKey = "environment-only-access-key";
+    const runtime = startSwarmbookServer({
+      databasePath: join(directory, "swarmbook.sqlite"),
+      hostname: "127.0.0.1",
+      port: 0,
+      service: { accessKey: configuredKey },
+      requestLogger: false,
+    });
+    runtimes.push(runtime);
+    const stored = runtime.database.sqlite
+      .query<{ value: string }, []>(
+        "select value from server_settings where key = 'access_key'",
+      )
+      .get();
+    expect(stored?.value).toBeString();
+    expect(stored?.value).not.toBe(configuredKey);
+  });
+
   test("preserves identity, threads, UI, and search across a process-equivalent restart", async () => {
     const directory = mkdtempSync(join(tmpdir(), "swarmbook-server-"));
     directories.push(directory);

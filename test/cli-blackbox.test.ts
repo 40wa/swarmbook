@@ -112,7 +112,7 @@ async function browserAuth(home: string, owner: string): Promise<CliResult> {
   };
 }
 
-describe("CLI as a separate process", () => {
+describe.serial("CLI as a separate process", () => {
   test("runs the complete command surface with isolated stored identities", async () => {
     const amberAuth = await browserAuth(amberHome, "alex");
     expect(amberAuth.exitCode).toBe(0);

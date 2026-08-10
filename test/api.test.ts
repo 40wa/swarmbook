@@ -9,11 +9,13 @@ let database: DatabaseHandle;
 let service: SwarmbookService;
 let app: ReturnType<typeof createApp>;
 let accessLogs: AccessLogEntry[];
+let ownerCredentialKeys: Map<string, string>;
 
 beforeEach(() => {
   database = createDatabase(":memory:");
   service = new SwarmbookService(database.db, { threadPostLimit: 3 });
   accessLogs = [];
+  ownerCredentialKeys = new Map();
   app = createApp(service, {
     requestLogger: (entry) => accessLogs.push(entry),
   });
@@ -27,8 +29,12 @@ async function apiData(response: Response): Promise<Record<string, any>> {
 }
 
 async function register(mininame: string, ownerName = "alex"): Promise<string> {
-  const ownerCredential = service.issueOwnerCredential("local-swarmbook", ownerName);
-  const owner = service.authenticateOwner(ownerCredential.key);
+  let ownerKey = ownerCredentialKeys.get(ownerName);
+  if (!ownerKey) {
+    ownerKey = service.issueOwnerCredential("local-swarmbook", ownerName).key;
+    ownerCredentialKeys.set(ownerName, ownerKey);
+  }
+  const owner = service.authenticateOwner(ownerKey);
   return service.createAgentIdentity(owner, mininame).key;
 }
 
@@ -105,6 +111,7 @@ describe("HTTP API", () => {
 
   test("returns one consistent negotiated error contract for validation failures", async () => {
     const ownerCredential = service.issueOwnerCredential("local-swarmbook", "alex");
+    ownerCredentialKeys.set("alex", ownerCredential.key);
     const response = await app.request("/api/owner/identities", {
       method: "POST",
       headers: {

@@ -2,6 +2,8 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { HTTPException } from "hono/http-exception";
+import { bodyLimit } from "hono/body-limit";
+import { secureHeaders } from "hono/secure-headers";
 import { streamSSE } from "hono/streaming";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod";
@@ -30,6 +32,14 @@ import {
   prefersJson,
   TOON_MEDIA_TYPE,
 } from "../transport/toon";
+import {
+  externalOrigin,
+  isBrowserMutation,
+  isPublicAuthPost,
+  PublicAuthRateLimiter,
+  type PublicAuthRateLimitOptions,
+  requestClientIp,
+} from "./security";
 
 type Environment = {
   Variables: {
@@ -50,6 +60,9 @@ export interface AccessLogEntry {
 
 export interface AppOptions {
   requestLogger?: ((entry: AccessLogEntry) => void) | false;
+  publicUrl?: string;
+  trustProxy?: boolean;
+  publicAuthRateLimit?: PublicAuthRateLimitOptions | false;
 }
 
 const identitySchema = z.object({ mininame: z.string() }).strict();
@@ -159,13 +172,17 @@ function requireBrowserOwner(
   return identity;
 }
 
-function setOwnerCookie(context: Context<Environment>, key: string): void {
+function setOwnerCookie(
+  context: Context<Environment>,
+  key: string,
+  origin: string,
+): void {
   setCookie(context, "swarmbook_owner_key", key, {
     httpOnly: true,
     sameSite: "Lax",
     path: "/",
     maxAge: 60 * 60 * 24 * 365,
-    secure: new URL(context.req.url).protocol === "https:",
+    secure: new URL(origin).protocol === "https:",
   });
 }
 
@@ -201,6 +218,50 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
     options.requestLogger === undefined
       ? (entry: AccessLogEntry) => console.info(JSON.stringify(entry))
       : options.requestLogger;
+  const requestOriginOptions = {
+    publicUrl: options.publicUrl,
+    trustProxy: options.trustProxy ?? false,
+  };
+  const publicAuthRateLimit = options.publicAuthRateLimit === false
+    ? undefined
+    : new PublicAuthRateLimiter(
+        options.publicAuthRateLimit ?? {
+          requests: 120,
+          windowMs: 60_000,
+        },
+      );
+
+  app.use("*", secureHeaders({
+    strictTransportSecurity: false,
+    xFrameOptions: "DENY",
+    contentSecurityPolicy: {
+      defaultSrc: ["'self'"],
+      baseUri: ["'none'"],
+      connectSrc: ["'self'"],
+      formAction: ["'self'"],
+      frameAncestors: ["'none'"],
+      imgSrc: ["'self'", "data:"],
+      objectSrc: ["'none'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrcAttr: ["'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      styleSrcAttr: ["'unsafe-inline'"],
+    },
+    permissionsPolicy: {
+      camera: [],
+      geolocation: [],
+      microphone: [],
+    },
+  }));
+
+  app.use("*", async (context, next) => {
+    await next();
+    context.header("Cache-Control", "no-store");
+    context.header("Pragma", "no-cache");
+    if (externalOrigin(context.req.raw, requestOriginOptions).startsWith("https://")) {
+      context.header("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    }
+  });
 
   app.use("*", async (context, next) => {
     const startedAt = performance.now();
@@ -229,6 +290,56 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
         });
       }
     }
+  });
+
+  app.use("*", bodyLimit({
+    maxSize: 16 * 1024,
+    onError: () => {
+      throw appError(
+        "payload_too_large",
+        "Request bodies are limited to 16 KiB.",
+        413,
+      );
+    },
+  }));
+
+  app.use("*", async (context, next) => {
+    const path = context.req.path;
+    if (isBrowserMutation(context.req.method, path)) {
+      const expectedOrigin = externalOrigin(context.req.raw, requestOriginOptions);
+      const suppliedOrigin = context.req.header("origin");
+      const fetchSite = context.req.header("sec-fetch-site");
+      const comparableOrigin = suppliedOrigin && suppliedOrigin !== "null"
+        ? suppliedOrigin
+        : undefined;
+      const crossOrigin = comparableOrigin
+        ? comparableOrigin !== expectedOrigin
+        : Boolean(fetchSite && fetchSite !== "same-origin" && fetchSite !== "none");
+      if (crossOrigin) {
+        throw appError(
+          "cross_origin_request",
+          "Browser mutations must originate from this Swarmbook server.",
+          403,
+        );
+      }
+    }
+    if (publicAuthRateLimit && isPublicAuthPost(context.req.method, path)) {
+      const limit = publicAuthRateLimit.consume(
+        requestClientIp(context.req.raw, requestOriginOptions.trustProxy),
+      );
+      if (!limit.allowed) {
+        context.header("Retry-After", String(limit.retryAfterSeconds));
+        const configured = options.publicAuthRateLimit === false
+          ? 120
+          : options.publicAuthRateLimit?.requests ?? 120;
+        throw appError(
+          "rate_limited",
+          `Public authentication is limited to ${configured} requests per minute per IP. Retry later.`,
+          429,
+        );
+      }
+    }
+    await next();
   });
 
   app.use("*", async (context, next) => {
@@ -303,7 +414,10 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
       {
         request_id: request.requestId,
         poll_token: request.pollToken,
-        verification_url: new URL(`/auth/cli/${request.requestId}`, context.req.url).toString(),
+        verification_url: new URL(
+          `/auth/cli/${request.requestId}`,
+          externalOrigin(context.req.raw, requestOriginOptions),
+        ).toString(),
         expires_at: request.expiresAt,
       },
       201,
@@ -441,7 +555,11 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
         formString(body, "access_key"),
         formString(body, "owner"),
       );
-      setOwnerCookie(context, credential.key);
+      setOwnerCookie(
+        context,
+        credential.key,
+        externalOrigin(context.req.raw, requestOriginOptions),
+      );
       return context.redirect(next);
     } catch (error) {
       if (error instanceof AppError) {
@@ -465,7 +583,11 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
         formString(body, "access_key"),
         formString(body, "owner"),
       );
-      setOwnerCookie(context, credential.key);
+      setOwnerCookie(
+        context,
+        credential.key,
+        externalOrigin(context.req.raw, requestOriginOptions),
+      );
       return context.html(<AuthorizationCompletePage owner={credential.owner} />);
     } catch (error) {
       if (error instanceof AppError) {

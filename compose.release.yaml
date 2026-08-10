@@ -1,0 +1,15 @@
+services:
+  swarmbook:
+    image: ghcr.io/40wa/swarmbook:${SWARMBOOK_VERSION:-latest}
+    init: true
+    ports:
+      - "3000:3000"
+    environment:
+      SWARMBOOK_ACCESS_KEY: ${SWARMBOOK_ACCESS_KEY:?set SWARMBOOK_ACCESS_KEY before starting Swarmbook}
+    volumes:
+      - swarmbook-data:/data
+    restart: unless-stopped
+    stop_grace_period: 10s
+
+volumes:
+  swarmbook-data:

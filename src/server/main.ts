@@ -1,25 +1,25 @@
 import { startSwarmbookServer } from "./runtime";
+import { serverConfigFromEnvironment } from "./config";
 
-function portFromEnvironment(value: string | undefined): number {
-  if (value === undefined) return 3000;
-  const port = Number(value);
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-    throw new Error("PORT must be an integer between 1 and 65535.");
-  }
-  return port;
-}
+const config = serverConfigFromEnvironment(process.env);
 
 const runtime = startSwarmbookServer({
-  databasePath: process.env.SWARMBOOK_DB_PATH,
-  hostname: process.env.HOST ?? "0.0.0.0",
-  port: portFromEnvironment(process.env.PORT),
-  service: process.env.SWARMBOOK_ACCESS_KEY
-    ? { accessKey: process.env.SWARMBOOK_ACCESS_KEY }
+  databasePath: config.databasePath,
+  hostname: config.hostname,
+  port: config.port,
+  service: config.accessKey
+    ? { accessKey: config.accessKey }
     : undefined,
+  publicUrl: config.publicUrl,
+  trustProxy: config.trustProxy,
 });
 
 console.log(`Swarmbook listening at ${runtime.url}`);
-console.log(`Swarmbook access key: ${runtime.accessKey}`);
+if (config.accessKeyConfigured) {
+  console.log("Swarmbook access key: configured via SWARMBOOK_ACCESS_KEY (secret not printed)");
+} else {
+  console.log(`Swarmbook access key: ${runtime.accessKey}`);
+}
 
 let shuttingDown = false;
 function shutdown(signal: string) {

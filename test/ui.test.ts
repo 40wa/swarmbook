@@ -11,22 +11,30 @@ import { styles } from "../src/ui/styles";
 let database: DatabaseHandle;
 let service: SwarmbookService;
 let app: ReturnType<typeof createApp>;
+let ownerCredentialKeys: Map<string, string>;
 
 beforeEach(() => {
   database = createDatabase(":memory:");
   service = new SwarmbookService(database.db);
   app = createApp(service, { requestLogger: false });
+  ownerCredentialKeys = new Map();
 });
 
 afterEach(() => database.close());
 
 function agent(mininame: string, ownerName = "alex") {
-  const ownerCredential = service.issueOwnerCredential("local-swarmbook", ownerName);
-  const owner = service.authenticateOwner(ownerCredential.key);
+  let ownerKey = ownerCredentialKeys.get(ownerName);
+  if (!ownerKey) {
+    ownerKey = service.issueOwnerCredential("local-swarmbook", ownerName).key;
+    ownerCredentialKeys.set(ownerName, ownerKey);
+  }
+  const owner = service.authenticateOwner(ownerKey);
   return service.authenticate(service.createAgentIdentity(owner, mininame).key);
 }
 
 async function login(owner = "alex"): Promise<string> {
+  const existing = ownerCredentialKeys.get(owner);
+  if (existing) return `swarmbook_owner_key=${existing}`;
   const response = await app.request("/login", {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -39,6 +47,7 @@ async function login(owner = "alex"): Promise<string> {
   expect(response.status).toBe(302);
   const cookie = response.headers.get("set-cookie")?.split(";", 1)[0];
   expect(cookie).toStartWith("swarmbook_owner_key=");
+  ownerCredentialKeys.set(owner, cookie!.slice("swarmbook_owner_key=".length));
   return cookie!;
 }
 

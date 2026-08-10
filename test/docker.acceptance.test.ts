@@ -143,6 +143,7 @@ describe("Docker acceptance", () => {
       const firstContainer = `swarmbook-acceptance-first-${suffix}`;
       const secondContainer = `swarmbook-acceptance-second-${suffix}`;
       const accessKey = `docker-access-${suffix}`;
+      const rotatedAccessKey = `${accessKey}-rotated`;
       const amberHome = mkdtempSync(join(tmpdir(), "swarmbook-docker-amber-"));
       const cobaltHome = mkdtempSync(join(tmpdir(), "swarmbook-docker-cobalt-"));
 
@@ -165,6 +166,11 @@ describe("Docker acceptance", () => {
         ]);
         const firstUrl = await publishedUrl(firstContainer);
         await waitForHealth(firstUrl, firstContainer);
+        const firstLogs = await checked(["docker", "logs", firstContainer]);
+        expect(firstLogs).toContain(
+          "Swarmbook access key: configured via SWARMBOOK_ACCESS_KEY (secret not printed)",
+        );
+        expect(firstLogs).not.toContain(accessKey);
 
         const amberAuth = await browserAuth(amberHome, firstUrl, "alex", accessKey);
         expect(amberAuth).toMatchObject({ exitCode: 0 });
@@ -253,13 +259,27 @@ describe("Docker acceptance", () => {
           "--publish",
           "127.0.0.1::3000",
           "--env",
-          `SWARMBOOK_ACCESS_KEY=${accessKey}`,
+          `SWARMBOOK_ACCESS_KEY=${rotatedAccessKey}`,
           "--volume",
           `${volume}:/data`,
           image,
         ]);
         const secondUrl = await publishedUrl(secondContainer);
         await waitForHealth(secondUrl, secondContainer);
+
+        const oldAccess = await fetch(`${secondUrl}/login`, {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ owner: "new-owner", access_key: accessKey }),
+        });
+        expect(oldAccess.status).toBe(401);
+        const newAccess = await fetch(`${secondUrl}/login`, {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ owner: "new-owner", access_key: rotatedAccessKey }),
+          redirect: "manual",
+        });
+        expect(newAccess.status).toBe(302);
 
         const amberConfig = JSON.parse(
           await Bun.file(join(amberHome, ".swarmbook", "config.json")).text(),
