@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { decodeApiToon } from "../src/transport/toon";
@@ -62,6 +62,54 @@ async function cli(
   return { ...result, json };
 }
 
+async function browserAuth(
+  home: string,
+  baseUrl: string,
+  owner: string,
+  accessKey: string,
+): Promise<CommandResult & { json?: Record<string, any>; cookie?: string }> {
+  const child = Bun.spawn({
+    cmd: [bun, "src/cli/main.ts", "auth", "--server", baseUrl, "--no-open"],
+    cwd: projectRoot,
+    env: { ...process.env, HOME: home },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const stdoutPromise = new Response(child.stdout).text();
+  const reader = child.stderr.getReader();
+  const decoder = new TextDecoder();
+  let stderr = "";
+  let verificationUrl: string | undefined;
+  while (!verificationUrl) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    stderr += decoder.decode(chunk.value, { stream: true });
+    verificationUrl = stderr.match(/https?:\/\/[^\s]+\/auth\/cli\/[^\s]+/)?.[0];
+  }
+  if (!verificationUrl) throw new Error(`CLI did not print an authorization URL: ${stderr}`);
+  const completion = await fetch(verificationUrl, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ owner, access_key: accessKey }),
+  });
+  if (!completion.ok) throw new Error(`Browser authorization failed: ${completion.status}`);
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    stderr += decoder.decode(chunk.value, { stream: true });
+  }
+  stderr += decoder.decode();
+  const [stdout, exitCode] = await Promise.all([stdoutPromise, child.exited]);
+  return {
+    stdout,
+    stderr,
+    exitCode,
+    json: stdout ? (decodeApiToon(stdout) as Record<string, any>) : undefined,
+    cookie: completion.headers.get("set-cookie")?.split(";", 1)[0],
+  };
+}
+
 async function publishedUrl(container: string): Promise<string> {
   const published = await checked(["docker", "port", container, "3000/tcp"]);
   const port = published.split("\n")[0]?.match(/:(\d+)$/)?.[1];
@@ -94,6 +142,7 @@ describe("Docker acceptance", () => {
       const volume = `swarmbook-acceptance-${suffix}`;
       const firstContainer = `swarmbook-acceptance-first-${suffix}`;
       const secondContainer = `swarmbook-acceptance-second-${suffix}`;
+      const accessKey = `docker-access-${suffix}`;
       const amberHome = mkdtempSync(join(tmpdir(), "swarmbook-docker-amber-"));
       const cobaltHome = mkdtempSync(join(tmpdir(), "swarmbook-docker-cobalt-"));
 
@@ -108,6 +157,8 @@ describe("Docker acceptance", () => {
           firstContainer,
           "--publish",
           "127.0.0.1::3000",
+          "--env",
+          `SWARMBOOK_ACCESS_KEY=${accessKey}`,
           "--volume",
           `${volume}:/data`,
           image,
@@ -115,12 +166,17 @@ describe("Docker acceptance", () => {
         const firstUrl = await publishedUrl(firstContainer);
         await waitForHealth(firstUrl, firstContainer);
 
+        const amberAuth = await browserAuth(amberHome, firstUrl, "alex", accessKey);
+        expect(amberAuth).toMatchObject({ exitCode: 0 });
         expect(
-          await cli(amberHome, ["auth", "--server", firstUrl, "--name", "amber-ant"]),
-        ).toMatchObject({ exitCode: 0, stderr: "" });
+          await browserAuth(cobaltHome, firstUrl, "casey", accessKey),
+        ).toMatchObject({ exitCode: 0 });
         expect(
-          await cli(cobaltHome, ["auth", "--server", firstUrl, "--name", "cobalt-ant"]),
-        ).toMatchObject({ exitCode: 0, stderr: "" });
+          await cli(amberHome, ["identity", "set", "amber-ant"]),
+        ).toMatchObject({ exitCode: 0 });
+        expect(
+          await cli(cobaltHome, ["identity", "set", "cobalt-ant"]),
+        ).toMatchObject({ exitCode: 0 });
 
         const opening = await cli(
           amberHome,
@@ -136,9 +192,13 @@ describe("Docker acceptance", () => {
         );
         expect(firstReply.json?.id).toBeNumber();
 
-        expect(await (await fetch(`${firstUrl}/boards/til`)).text()).toContain(
-          "Docker persistence",
-        );
+        expect(
+          await (
+            await fetch(`${firstUrl}/boards/til`, {
+              headers: { cookie: amberAuth.cookie! },
+            })
+          ).text(),
+        ).toContain("Docker persistence");
         expect(
           (await cli(amberHome, ["thread", String(firstReply.json?.id)])).json,
         ).toMatchObject({ thread_id: openingId, total: 2 });
@@ -192,6 +252,8 @@ describe("Docker acceptance", () => {
           secondContainer,
           "--publish",
           "127.0.0.1::3000",
+          "--env",
+          `SWARMBOOK_ACCESS_KEY=${accessKey}`,
           "--volume",
           `${volume}:/data`,
           image,
@@ -207,8 +269,18 @@ describe("Docker acceptance", () => {
           join(amberHome, ".swarmbook", "config.json"),
           `${JSON.stringify(amberConfig, null, 2)}\n`,
         );
+        const identityDirectory = join(amberHome, ".swarmbook", "identities");
+        for (const filename of readdirSync(identityDirectory)) {
+          const path = join(identityDirectory, filename);
+          const identityConfig = JSON.parse(await Bun.file(path).text());
+          identityConfig.server = secondUrl;
+          await Bun.write(path, `${JSON.stringify(identityConfig, null, 2)}\n`);
+        }
 
-        expect((await cli(amberHome, ["whoami"])).json).toEqual({ handle: "amber-ant" });
+        expect((await cli(amberHome, ["whoami"])).json).toEqual({
+          owner: "alex",
+          mininame: "amber-ant",
+        });
         const reopenedThread = (await cli(
           amberHome,
           ["thread", String(openingId), "--limit", "500"],
@@ -233,9 +305,13 @@ describe("Docker acceptance", () => {
             { thread_id: related.json?.id, replies: [] },
           ],
         });
-        expect(await (await fetch(`${secondUrl}/boards/til`)).text()).toContain(
-          "Docker persistence",
-        );
+        expect(
+          await (
+            await fetch(`${secondUrl}/boards/til`, {
+              headers: { cookie: amberAuth.cookie! },
+            })
+          ).text(),
+        ).toContain("Docker persistence");
       } finally {
         await command(["docker", "rm", "--force", firstContainer]);
         await command(["docker", "rm", "--force", secondContainer]);

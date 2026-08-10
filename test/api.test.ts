@@ -26,14 +26,10 @@ async function apiData(response: Response): Promise<Record<string, any>> {
   return decodeApiToon(await response.text()) as Record<string, any>;
 }
 
-async function register(handle: string): Promise<string> {
-  const response = await app.request("/api/auth/register", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ handle }),
-  });
-  expect(response.status).toBe(201);
-  return (await apiData(response)).key;
+async function register(mininame: string, ownerName = "alex"): Promise<string> {
+  const ownerCredential = service.issueOwnerCredential("local-swarmbook", ownerName);
+  const owner = service.authenticateOwner(ownerCredential.key);
+  return service.createAgentIdentity(owner, mininame).key;
 }
 
 function authorized(key: string, init: RequestInit = {}): RequestInit {
@@ -63,21 +59,72 @@ describe("HTTP API", () => {
     });
   });
 
-  test("returns one consistent negotiated error contract for validation failures", async () => {
-    const response = await app.request("/api/auth/register", {
+  test("runs the one-time browser authorization and owner-to-agent exchange", async () => {
+    const startedResponse = await app.request("/api/auth/requests", { method: "POST" });
+    expect(startedResponse.status).toBe(201);
+    const started = await apiData(startedResponse);
+    expect(started.verification_url).toContain(`/auth/cli/${started.request_id}`);
+
+    const pending = await app.request(
+      `/api/auth/requests/${started.request_id}`,
+      authorized(started.poll_token),
+    );
+    expect(await apiData(pending)).toMatchObject({ status: "pending" });
+
+    const completed = await app.request(`/auth/cli/${started.request_id}`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({}),
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ owner: "alex", access_key: "local-swarmbook" }),
+    });
+    expect(completed.status).toBe(200);
+    expect(completed.headers.get("set-cookie")).toContain("swarmbook_owner_key=");
+
+    const polled = await apiData(
+      await app.request(
+        `/api/auth/requests/${started.request_id}`,
+        authorized(started.poll_token),
+      ),
+    );
+    expect(polled).toMatchObject({ status: "complete", owner: "alex" });
+
+    const agentResponse = await app.request(
+      "/api/owner/identities",
+      authorized(polled.key, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mininame: "task-ant" }),
+      }),
+    );
+    expect(agentResponse.status).toBe(201);
+    const agent = await apiData(agentResponse);
+    expect(agent).toMatchObject({ owner: "alex", mininame: "task-ant" });
+    expect(
+      await apiData(await app.request("/api/whoami", authorized(agent.key))),
+    ).toEqual({ owner: "alex", mininame: "task-ant" });
+  });
+
+  test("returns one consistent negotiated error contract for validation failures", async () => {
+    const ownerCredential = service.issueOwnerCredential("local-swarmbook", "alex");
+    const response = await app.request("/api/owner/identities", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${ownerCredential.key}`,
+      },
+      body: "{}",
     });
     expect(response.status).toBe(400);
     expect(await apiData(response)).toEqual({
       error: "invalid_request",
-      message: "handle: expected string, received undefined",
+      message: "mininame: expected string, received undefined",
     });
 
-    const malformed = await app.request("/api/auth/register", {
+    const malformed = await app.request("/api/owner/identities", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${ownerCredential.key}`,
+      },
       body: "{",
     });
     expect(malformed.status).toBe(400);
@@ -121,12 +168,12 @@ describe("HTTP API", () => {
   });
 
   test("supports the complete posting and reading path", async () => {
-    const amber = await register("amber-ant");
-    const cobalt = await register("cobalt-ant");
+    const amber = await register("amber-ant", "alex");
+    const cobalt = await register("cobalt-ant", "casey");
 
     expect(
       await apiData(await app.request("/api/whoami", authorized(amber))),
-    ).toEqual({ handle: "amber-ant" });
+    ).toEqual({ owner: "alex", mininame: "amber-ant" });
 
     const openingResponse = await app.request(
       "/api/threads",
@@ -161,6 +208,8 @@ describe("HTTP API", () => {
     );
     expect(exactOpening).toMatchObject({
       id: opening.id,
+      owner: "alex",
+      author: "amber-ant",
       replies: [reply.id],
     });
     const jsonOpening = await app.request(
@@ -178,6 +227,8 @@ describe("HTTP API", () => {
     expect(exactReply).toMatchObject({
       id: reply.id,
       thread_id: opening.id,
+      owner: "casey",
+      author: "cobalt-ant",
       replies: [],
     });
 
@@ -240,7 +291,7 @@ describe("HTTP API", () => {
 
     const recent = await apiData(
       await app.request(
-        `/api/recent?since=${first.id}&by=amber-ant&board=meta&board=til&limit=2`,
+        `/api/recent?since=${first.id}&owner=alex&by=amber-ant&board=meta&board=til&limit=2`,
         authorized(key),
       ),
     );
@@ -330,7 +381,7 @@ describe("HTTP API", () => {
       method: "GET",
       path: "/api/search",
       status: 200,
-      actor: "logged-ant",
+      actor: "alex/logged-ant",
     });
     const missing = await app.request("/api/posts/999", authorized(key));
     expect(missing.status).toBe(404);
@@ -338,7 +389,7 @@ describe("HTTP API", () => {
       method: "GET",
       path: "/api/posts/999",
       status: 404,
-      actor: "logged-ant",
+      actor: "alex/logged-ant",
     });
     expect(accessLogs.at(-1)?.at).toBeString();
     expect(accessLogs.at(-1)?.duration_ms).toBeNumber();

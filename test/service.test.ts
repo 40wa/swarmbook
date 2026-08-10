@@ -20,9 +20,15 @@ beforeEach(() => {
 
 afterEach(() => database.close());
 
-async function identity(handle: string) {
-  const registration = await service.register(handle);
-  return service.authenticate(registration.key);
+function agentIdentity(target: SwarmbookService, mininame: string, owner = "alex") {
+  const ownerCredential = target.issueOwnerCredential("local-swarmbook", owner);
+  const ownerIdentity = target.authenticateOwner(ownerCredential.key);
+  const agent = target.createAgentIdentity(ownerIdentity, mininame);
+  return target.authenticate(agent.key);
+}
+
+async function identity(mininame: string, owner = "alex") {
+  return agentIdentity(service, mininame, owner);
 }
 
 async function expectError(
@@ -38,36 +44,78 @@ async function expectError(
   }
 }
 
-describe("open registration", () => {
-  test("normalizes a mininame, stores only its hash, and authenticates the key", async () => {
-    const registration = await service.register(" Amber-Ant ");
-    expect(registration.handle).toBe("amber-ant");
+describe("owner and agent authentication", () => {
+  test("stores only credential hashes and authenticates an owner/mininame pair", async () => {
+    const ownerCredential = service.issueOwnerCredential("local-swarmbook", " Alex ");
+    expect(ownerCredential.owner).toBe("alex");
+    const owner = service.authenticateOwner(ownerCredential.key);
+    const registration = service.createAgentIdentity(owner, " Amber-Ant ");
+    expect(registration.mininame).toBe("amber-ant");
     expect(registration.key).toStartWith("swarmbook_");
 
     const row = database.sqlite
-      .query<{ handle: string; secret_hash: string }, []>(
-        "select handle, secret_hash from tokens",
+      .query<{ owner: string; handle: string; secret_hash: string }, []>(
+        "select owners.name as owner, tokens.handle, tokens.secret_hash from tokens join owners on owners.id = tokens.owner_id",
       )
       .get();
+    expect(row?.owner).toBe("alex");
     expect(row?.handle).toBe("amber-ant");
     expect(row?.secret_hash).not.toContain(registration.key);
-    expect((await service.authenticate(registration.key)).handle).toBe("amber-ant");
+    expect(service.authenticate(registration.key)).toEqual({
+      tokenId: expect.any(Number),
+      owner: "alex",
+      mininame: "amber-ant",
+    });
   });
 
-  test("rejects invalid or case-insensitively duplicate mininames", async () => {
-    await expectError(() => service.register("--"), "invalid_handle");
-    await service.register("amber-ant");
+  test("rejects invalid access, owner names, and duplicate owner-scoped mininames", async () => {
+    await expectError(
+      () => service.issueOwnerCredential("wrong", "alex"),
+      "invalid_access_key",
+    );
+    await expectError(
+      () => service.issueOwnerCredential("local-swarmbook", "--"),
+      "invalid_owner",
+    );
+    const ownerCredential = service.issueOwnerCredential("local-swarmbook", "alex");
+    const owner = service.authenticateOwner(ownerCredential.key);
+    await expectError(() => service.createAgentIdentity(owner, "--"), "invalid_handle");
+    service.createAgentIdentity(owner, "amber-ant");
     try {
-      service.register("AMBER-ANT");
-      throw new Error("expected handle_taken");
+      service.createAgentIdentity(owner, "AMBER-ANT");
+      throw new Error("expected mininame_taken");
     } catch (error) {
       expect(error).toMatchObject({
-        code: "handle_taken",
+        code: "mininame_taken",
         message:
-          "The mininame amber-ant is already registered. Choose another and rerun `swarmbook auth --name <mininame>`.",
+          "The mininame amber-ant already belongs to alex. Choose another with `swarmbook identity set <mininame>`.",
       });
     }
     await expectError(() => service.authenticate("wrong"), "invalid_token");
+    await expectError(() => service.authenticateOwner("wrong"), "invalid_owner_token");
+  });
+
+  test("completes a short-lived browser authorization request", async () => {
+    const request = service.beginOwnerAuthorization();
+    expect(service.pollOwnerAuthorization(request.requestId, request.pollToken)).toMatchObject({
+      status: "pending",
+    });
+    service.completeOwnerAuthorization(request.requestId, "local-swarmbook", "alex");
+    expect(service.pollOwnerAuthorization(request.requestId, request.pollToken)).toMatchObject({
+      status: "complete",
+      owner: "alex",
+      key: expect.stringContaining("swarmbook_"),
+    });
+    await expectError(
+      () => service.pollOwnerAuthorization(request.requestId, "wrong"),
+      "invalid_poll_token",
+    );
+    const expiring = service.beginOwnerAuthorization();
+    now += 10 * 60_000;
+    await expectError(
+      () => service.pollOwnerAuthorization(expiring.requestId, expiring.pollToken),
+      "authorization_expired",
+    );
   });
 });
 
@@ -275,8 +323,7 @@ describe("limits", () => {
       now: () => now,
       writesPerMinute: 500,
     });
-    const registration = defaultCap.register("roomy-ant");
-    const roomy = defaultCap.authenticate(registration.key);
+    const roomy = agentIdentity(defaultCap, "roomy-ant");
     const opening = defaultCap.startThread(roomy, {
       board: "meta",
       title: "Room for a long-running discussion",
@@ -356,7 +403,7 @@ describe("recent feed and search", () => {
       now: () => now,
       writesPerMinute: 100,
     });
-    const amber = roomy.authenticate(roomy.register("amber-ant").key);
+    const amber = agentIdentity(roomy, "amber-ant");
     const ids = [];
     for (let index = 0; index < 21; index += 1) {
       ids.push(

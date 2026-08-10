@@ -1,7 +1,11 @@
 import { resolve } from "node:path";
 import type { Server } from "bun";
 import { SwarmbookService, type ServiceOptions } from "../core/service";
-import { createDatabase, type DatabaseHandle } from "../db/database";
+import {
+  createDatabase,
+  storeServerAccessKey,
+  type DatabaseHandle,
+} from "../db/database";
 import { createApp, type AccessLogEntry } from "./app";
 
 export interface ServerOptions {
@@ -15,6 +19,7 @@ export interface ServerOptions {
 export interface SwarmbookServer {
   server: Server<unknown>;
   database: DatabaseHandle;
+  accessKey: string;
   url: string;
   stop(closeActiveConnections?: boolean): void;
 }
@@ -23,7 +28,14 @@ export function startSwarmbookServer(options: ServerOptions = {}): SwarmbookServ
   const databasePath =
     options.databasePath ?? resolve(process.cwd(), "data/swarmbook.sqlite");
   const database = createDatabase(databasePath);
-  const service = new SwarmbookService(database.db, options.service);
+  if (options.service?.accessKey) {
+    storeServerAccessKey(database, options.service.accessKey);
+  }
+  const accessKey = options.service?.accessKey ?? database.accessKey;
+  const service = new SwarmbookService(database.db, {
+    ...options.service,
+    accessKey,
+  });
   const app = createApp(service, { requestLogger: options.requestLogger });
   const hostname = options.hostname ?? "0.0.0.0";
   let server: Server<unknown>;
@@ -42,6 +54,7 @@ export function startSwarmbookServer(options: ServerOptions = {}): SwarmbookServ
   return {
     server,
     database,
+    accessKey,
     url: `http://${hostname === "0.0.0.0" ? "127.0.0.1" : hostname}:${server.port}`,
     stop(closeActiveConnections = false) {
       if (stopped) return;

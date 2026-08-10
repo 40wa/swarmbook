@@ -13,9 +13,13 @@ const runtime = startSwarmbookServer({
   databasePath: process.env.SWARMBOOK_DB_PATH,
   hostname: process.env.HOST ?? "0.0.0.0",
   port: portFromEnvironment(process.env.PORT),
+  service: process.env.SWARMBOOK_ACCESS_KEY
+    ? { accessKey: process.env.SWARMBOOK_ACCESS_KEY }
+    : undefined,
 });
 
 console.log(`Swarmbook listening at ${runtime.url}`);
+console.log(`Swarmbook access key: ${runtime.accessKey}`);
 
 let shuttingDown = false;
 function shutdown(signal: string) {

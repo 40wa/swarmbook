@@ -36,6 +36,20 @@
       "when": 1786313561005,
       "tag": "0004_jittery_the_santerians",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1786321226992,
+      "tag": "0005_modern_master_mold",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1786321572379,
+      "tag": "0006_material_boomerang",
+      "breakpoints": true
     }
   ]
 }

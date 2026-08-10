@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 import {
   cpSync,
   existsSync,
@@ -49,6 +50,14 @@ describe("database migrations", () => {
         )
         .get()?.sql,
     ).toContain("between 1 and 1000");
+    expect(handle.accessKey).toStartWith("swarmbook_access_");
+    expect(
+      handle.sqlite
+        .query<{ value: string }, []>(
+          "select value from server_settings where key = 'access_key'",
+        )
+        .get()?.value,
+    ).toBe(handle.accessKey);
     handle.close();
 
     const reopened = new Database(path, { readonly: true });
@@ -63,11 +72,14 @@ describe("database migrations", () => {
     temporaryDirectories.push(directory);
     const path = join(directory, "swarmbook.sqlite");
 
-    createDatabase(path).close();
+    const first = createDatabase(path);
+    const accessKey = first.accessKey;
+    first.close();
     const reopened = createDatabase(path);
     expect(reopened.sqlite.query("select count(*) as count from boards").get()).toEqual({
       count: 3,
     });
+    expect(reopened.accessKey).toBe(accessKey);
     reopened.close();
   });
 
@@ -89,19 +101,45 @@ describe("database migrations", () => {
     );
 
     const old = createDatabase(path, { migrationsFolder: oldMigrations });
-    const oldService = new SwarmbookService(old.db, { threadPostLimit: 2 });
-    const registration = oldService.register("upgrade-ant");
-    const identity = oldService.authenticate(registration.key);
-    const opening = oldService.startThread(identity, {
-      board: "til",
-      title: "Before migration",
-      body: "Existing searchable body",
-    });
-    const existingReply = oldService.reply(
-      identity,
-      opening.id,
-      "Existing self-referencing reply",
-    );
+    const agentKey = "swarmbook_upgrade_test_key";
+    const token = old.sqlite
+      .query("insert into tokens (handle, secret_hash, frozen, created_at) values (?, ?, 0, ?)")
+      .run(
+        "upgrade-ant",
+        createHash("sha256").update(agentKey).digest("hex"),
+        Date.now(),
+      );
+    const tokenId = Number(token.lastInsertRowid);
+    const openingInsert = old.sqlite
+      .query(
+        `insert into posts
+          (parent, board, author, author_token_id, title, body, at, successor_of)
+         values (null, ?, ?, ?, ?, ?, ?, null)`,
+      )
+      .run(
+        "til",
+        "upgrade-ant",
+        tokenId,
+        "Before migration",
+        "Existing searchable body",
+        Date.now(),
+      );
+    const opening = { id: Number(openingInsert.lastInsertRowid) };
+    const replyInsert = old.sqlite
+      .query(
+        `insert into posts
+          (parent, board, author, author_token_id, title, body, at, successor_of)
+         values (?, ?, ?, ?, null, ?, ?, null)`,
+      )
+      .run(
+        opening.id,
+        "til",
+        "upgrade-ant",
+        tokenId,
+        "Existing self-referencing reply",
+        Date.now(),
+      );
+    const existingReply = { id: Number(replyInsert.lastInsertRowid) };
     old.sqlite
       .query("update posts set body = ? where id = ?")
       .run(
@@ -116,8 +154,8 @@ describe("database migrations", () => {
       )
       .run(
         "til",
-        identity.handle,
-        identity.tokenId,
+        "upgrade-ant",
+        tokenId,
         "Existing successor",
         `>>${opening.id} Existing successor body`,
         Date.now(),
@@ -148,7 +186,12 @@ describe("database migrations", () => {
       title: "Existing successor",
     });
     expect(upgradedService.getPost(formerSuccessorId).replies).toEqual([]);
-    upgradedService.startThread(upgradedService.authenticate(registration.key), {
+    expect(upgradedService.authenticate(agentKey)).toMatchObject({
+      owner: "legacy",
+      mininame: "upgrade-ant",
+    });
+    expect(upgradedService.getPost(opening.id)).toMatchObject({ owner: "legacy" });
+    upgradedService.startThread(upgradedService.authenticate(agentKey), {
       board: "til",
       title: "After migration",
       body: "New searchable body",

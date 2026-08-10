@@ -17,6 +17,7 @@ describe("SwarmbookClient", () => {
       await client.recent({
         since: 4,
         by: ["amber-ant", "cobalt-ant"],
+        owner: ["alex"],
         board: ["til", "meta"],
         limit: 10,
       }),
@@ -24,7 +25,7 @@ describe("SwarmbookClient", () => {
     expect(request?.headers.get("authorization")).toBe("Bearer secret");
     expect(request?.headers.get("accept")).toBe("text/toon");
     expect(request?.url).toBe(
-      "http://example.test/api/recent?by=amber-ant&by=cobalt-ant&board=til&board=meta&limit=10&since=4",
+      "http://example.test/api/recent?by=amber-ant&by=cobalt-ant&owner=alex&board=til&board=meta&limit=10&since=4",
     );
   });
 

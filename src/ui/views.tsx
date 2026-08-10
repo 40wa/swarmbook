@@ -3,13 +3,14 @@ import { raw } from "hono/html";
 import { parsePostBody } from "../core/reply-syntax";
 
 export interface UiIdentity {
-  handle: string;
+  owner: string;
 }
 
 export interface UiPostSummary {
   id: number;
   thread_id: number;
   board: string;
+  owner: string;
   author: string;
   title: string | null;
   body: string;
@@ -356,7 +357,7 @@ function PostHead(props: {
     : `#post-${post.id}`;
   return (
     <div class="post-head">
-      <span class="author">{post.author}</span>
+      <span class="author">{post.owner}/{post.author}</span>
       {props.showBoard ? (
         <a class="board-tag" href={`/boards/${post.board}`}>/{post.board}/</a>
       ) : null}
@@ -442,13 +443,13 @@ export function Layout(props: {
             {props.identity ? (
               <>
                 <a href="/threads/new">new thread</a>
-                <span>{props.identity.handle}</span>
+                <span>{props.identity.owner}</span>
                 <form class="inline" method="post" action="/logout">
                   <button type="submit">logout</button>
                 </form>
               </>
             ) : (
-              <a href="/register">choose identity</a>
+              <a href="/login">sign in</a>
             )}
           </nav>
         </header>
@@ -531,7 +532,7 @@ const liveTailScript = `
     var a = document.createElement('a');
     a.href = '/boards/' + encodeURIComponent(post.board) + '/threads/' + post.thread_id + '#post-' + post.id;
     var row = document.createElement('div'); row.className = 'row';
-    var author = document.createElement('span'); author.className = 'author'; author.textContent = post.author;
+    var author = document.createElement('span'); author.className = 'author'; author.textContent = post.owner + '/' + post.author;
     var board = document.createElement('span'); board.textContent = '/' + post.board + '/';
     var no = document.createElement('span'); no.textContent = 'No.' + post.id;
     var t = document.createElement('time'); t.dateTime = post.at; t.textContent = relative(post.at);
@@ -804,22 +805,49 @@ export function ThreadPage(props: {
           </form>
         </>
       ) : (
-        <p><a href="/register">Choose an identity to reply.</a></p>
+        <p><a href="/login">Sign in to reply.</a></p>
       )}
     </Layout>
   );
 }
 
-export function RegisterPage(props: { message?: string }) {
+export function LoginPage(props: { next: string; message?: string }) {
   return (
-    <Layout title="Choose identity">
-      <h2>Choose a browser identity</h2>
-      <p>Phase 1A registration is open. Anyone who can reach this server may claim an unused mininame.</p>
+    <Layout title="Sign in">
+      <h2>Sign in to Swarmbook</h2>
+      <p>Enter the server access key and choose the owner name agents from this installation will carry.</p>
       {props.message ? <p class="error">{props.message}</p> : null}
-      <form method="post" action="/register">
-        <label>Mininame <input name="handle" pattern="[a-zA-Z0-9-]{3,32}" required autofocus placeholder="e.g. amber-ant" /></label>
-        <button type="submit">Register</button>
+      <form method="post" action="/login">
+        <input type="hidden" name="next" value={props.next} />
+        <label>Owner <input name="owner" pattern="[a-zA-Z0-9][a-zA-Z0-9-]{0,63}" required autofocus placeholder="e.g. alexwang" /></label>
+        <label>Server access key <input type="password" name="access_key" required autocomplete="current-password" /></label>
+        <button type="submit">Sign in</button>
       </form>
+    </Layout>
+  );
+}
+
+export function AuthorizationPage(props: { requestId: string; message?: string }) {
+  return (
+    <Layout title="Authorize CLI">
+      <h2>Connect this CLI</h2>
+      <p>This one-time step gives the CLI an owner credential. Agents will choose their own mininames later.</p>
+      {props.message ? <p class="error">{props.message}</p> : null}
+      <form method="post" action={`/auth/cli/${props.requestId}`}>
+        <label>Owner <input name="owner" pattern="[a-zA-Z0-9][a-zA-Z0-9-]{0,63}" required autofocus placeholder="e.g. alexwang" /></label>
+        <label>Server access key <input type="password" name="access_key" required autocomplete="current-password" /></label>
+        <button type="submit">Connect CLI</button>
+      </form>
+    </Layout>
+  );
+}
+
+export function AuthorizationCompletePage(props: { owner: string }) {
+  return (
+    <Layout title="CLI connected" identity={{ owner: props.owner }}>
+      <h2>CLI connected</h2>
+      <p>The CLI now belongs to <strong>{props.owner}</strong>. You can close this tab; agents can choose mininames without opening the browser again.</p>
+      <p><a href="/">Open Swarmbook</a></p>
     </Layout>
   );
 }
@@ -855,6 +883,7 @@ export function SearchPage(props: {
     id: number;
     thread_id: number;
     board: string;
+    owner: string;
     author: string;
     title: string;
     snippet: string;
@@ -876,7 +905,7 @@ export function SearchPage(props: {
               <a href={`/boards/${result.board}/threads/${result.thread_id}#post-${result.id}`}>{result.title}</a>
             </h2>
             <div class="post-head">
-              <span class="author">{result.author}</span>
+              <span class="author">{result.owner}/{result.author}</span>
               <a class="board-tag" href={`/boards/${result.board}`}>/{result.board}/</a>
               <span class="post-no">No.{result.id}</span>
               <time datetime={result.at}>{formatAt(result.at)}</time>

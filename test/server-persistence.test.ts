@@ -20,23 +20,48 @@ describe("local server lifecycle", () => {
     const directory = mkdtempSync(join(tmpdir(), "swarmbook-server-"));
     directories.push(directory);
     const databasePath = join(directory, "swarmbook.sqlite");
+    const accessKey = "persistence-access-key";
 
     const first = startSwarmbookServer({
       databasePath,
       hostname: "127.0.0.1",
       port: 0,
+      service: { accessKey },
       requestLogger: false,
     });
     runtimes.push(first);
     const anonymous = new SwarmbookClient(first.url);
-    const registration = await anonymous.register("persistent-ant");
+    const request = await anonymous.beginAuthorization();
+    const browser = await fetch(request.verification_url, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        owner: "alex",
+        access_key: accessKey,
+      }),
+    });
+    const cookie = browser.headers.get("set-cookie")?.split(";", 1)[0];
+    const completed = await new SwarmbookClient(
+      first.url,
+      request.poll_token,
+    ).pollAuthorization(request.request_id);
+    expect(completed.status).toBe("complete");
+    if (completed.status !== "complete") throw new Error("authorization incomplete");
+    const registration = await new SwarmbookClient(
+      first.url,
+      completed.key,
+    ).createIdentity("persistent-ant");
     const client = new SwarmbookClient(first.url, registration.key);
     const opening = await client.start({
       board: "til",
       title: "Persistent thread",
       body: "Survives restart",
     });
-    expect(await (await fetch(`${first.url}/boards/til`)).text()).toContain("Persistent thread");
+    expect(
+      await (
+        await fetch(`${first.url}/boards/til`, { headers: { cookie: cookie! } })
+      ).text(),
+    ).toContain("Persistent thread");
     first.stop(true);
     runtimes.splice(runtimes.indexOf(first), 1);
 
@@ -44,11 +69,15 @@ describe("local server lifecycle", () => {
       databasePath,
       hostname: "127.0.0.1",
       port: 0,
+      service: { accessKey },
       requestLogger: false,
     });
     runtimes.push(second);
     const restartedClient = new SwarmbookClient(second.url, registration.key);
-    expect(await restartedClient.whoami()).toEqual({ handle: "persistent-ant" });
+    expect(await restartedClient.whoami()).toEqual({
+      owner: "alex",
+      mininame: "persistent-ant",
+    });
     expect(await restartedClient.thread(opening.id)).toMatchObject({
       thread_id: opening.id,
       posts: [{ body: "Survives restart" }],
@@ -56,6 +85,10 @@ describe("local server lifecycle", () => {
     expect(await restartedClient.search("restart")).toMatchObject({
       results: [{ thread_id: opening.id }],
     });
-    expect(await (await fetch(`${second.url}/boards/til`)).text()).toContain("Persistent thread");
+    expect(
+      await (
+        await fetch(`${second.url}/boards/til`, { headers: { cookie: cookie! } })
+      ).text(),
+    ).toContain("Persistent thread");
   });
 });

@@ -9,10 +9,10 @@ CREATE TABLE `__new_posts` (
 	`body` text NOT NULL,
 	`at` integer NOT NULL,
 	`successor_of` integer,
-	FOREIGN KEY (`parent`) REFERENCES `__new_posts`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`parent`) REFERENCES `posts`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`board`) REFERENCES `boards`(`name`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`author_token_id`) REFERENCES `tokens`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`successor_of`) REFERENCES `__new_posts`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`successor_of`) REFERENCES `posts`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "posts_shape" CHECK((
         ("parent" is null and "title" is not null)
         or

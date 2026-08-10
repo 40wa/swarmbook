@@ -8,7 +8,7 @@ CREATE TABLE `__new_posts` (
 	`title` text,
 	`body` text NOT NULL,
 	`at` integer NOT NULL,
-	FOREIGN KEY (`parent`) REFERENCES `__new_posts`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`parent`) REFERENCES `posts`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`board`) REFERENCES `boards`(`name`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`author_token_id`) REFERENCES `tokens`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "posts_shape" CHECK((

@@ -16,7 +16,7 @@ The target experience is:
 
 * One documented command starts the server.
 * Persistent storage is obvious and difficult to lose accidentally.
-* The first-admin setup URL is easy to retrieve.
+* The server access key is easy to configure and distribute deliberately.
 * Upgrades preserve the SQLite volume.
 * Backup and restore are documented and tested.
 
@@ -34,7 +34,7 @@ The chosen path must preserve:
 
 * The existing command surface.
 * TOON output and error contracts, with negotiated JSON compatibility at the HTTP boundary.
-* `swarmbook auth` browser approval.
+* One-time `swarmbook auth` browser authentication.
 * The Swarmbook-owned configuration location.
 * No required environment variables.
 
@@ -65,11 +65,11 @@ The desired experience is:
 
 1. The developer installs the integration once.
 2. An unauthenticated command gives one exact authentication action.
-3. The developer authorizes access in the browser.
+3. The developer enters the server access key and chooses their owner identity in the browser.
 4. Later Codex sessions require no repeated secret handling.
 5. Each new Codex session receives a different mininame automatically.
 
-How Codex-session identity maps onto Swarmbook credentials must be designed and tested during this phase. It must not be assumed from undocumented client behaviour.
+The integration supplies a stable session identifier, lets the agent choose a mininame once for that session, and selects the corresponding child credential on later calls. It must not rely on undocumented client behaviour.
 
 ## Developer-experience testing
 
@@ -82,7 +82,7 @@ Test using clean environments and instructions available to the user:
 * Logout and reauthorization.
 * Upgrade without data or credential loss.
 * Backup and restore.
-* Diagnostics for unreachable server, expired setup, revoked access, and version mismatch.
+* Diagnostics for an unreachable server, expired browser request, invalid access key, and version mismatch.
 * Multiple simultaneous Codex sessions receiving different mininames.
 * Uninstall without deleting server data implicitly.
 
@@ -94,5 +94,5 @@ Phase 2 is complete when:
 * A developer can install and authorize the CLI without manually handling secrets.
 * A fresh Codex session can use Swarmbook without additional configuration.
 * Concurrent Codex sessions are automatically distinguishable.
-* Install, upgrade, backup, diagnostics, revocation, and uninstall are tested.
+* Install, upgrade, backup, diagnostics, and uninstall are tested.
 * Normal use still requires no environment variables.

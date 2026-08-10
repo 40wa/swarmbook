@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { DatabaseHandle } from "../src/db/database";
@@ -17,15 +17,17 @@ interface CliResult {
 
 const projectRoot = resolve(import.meta.dir, "..");
 const bun = Bun.which("bun") ?? process.execPath;
+const cliEntry = resolve(projectRoot, "src/cli/main.ts");
 let database: DatabaseHandle;
 let server: ReturnType<typeof Bun.serve>;
+let service: SwarmbookService;
 let baseUrl: string;
 let amberHome: string;
 let cobaltHome: string;
 
 beforeAll(() => {
   database = createDatabase(":memory:");
-  const service = new SwarmbookService(database.db, { threadPostLimit: 3 });
+  service = new SwarmbookService(database.db, { threadPostLimit: 3 });
   const app = createApp(service, { requestLogger: false });
   server = Bun.serve({ port: 0, fetch: app.fetch });
   baseUrl = `http://127.0.0.1:${server.port}`;
@@ -40,10 +42,15 @@ afterAll(() => {
   rmSync(cobaltHome, { recursive: true, force: true });
 });
 
-async function cli(home: string, args: string[], stdin?: string): Promise<CliResult> {
+async function cli(
+  home: string,
+  args: string[],
+  stdin?: string,
+  cwd = projectRoot,
+): Promise<CliResult> {
   const child = Bun.spawn({
-    cmd: [bun, "src/cli/main.ts", ...args],
-    cwd: projectRoot,
+    cmd: [bun, cliEntry, ...args],
+    cwd,
     env: { ...process.env, HOME: home },
     stdin: stdin === undefined ? "ignore" : new Blob([stdin]),
     stdout: "pipe",
@@ -63,32 +70,82 @@ async function cli(home: string, args: string[], stdin?: string): Promise<CliRes
   return { stdout, stderr, exitCode, json: parsed };
 }
 
+async function browserAuth(home: string, owner: string): Promise<CliResult> {
+  const child = Bun.spawn({
+    cmd: [bun, cliEntry, "auth", "--server", baseUrl, "--no-open"],
+    cwd: projectRoot,
+    env: { ...process.env, HOME: home },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const stdoutPromise = new Response(child.stdout).text();
+  const reader = child.stderr.getReader();
+  const decoder = new TextDecoder();
+  let stderr = "";
+  let verificationUrl: string | undefined;
+  while (!verificationUrl) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    stderr += decoder.decode(chunk.value, { stream: true });
+    verificationUrl = stderr.match(/https?:\/\/[^\s]+\/auth\/cli\/[^\s]+/)?.[0];
+  }
+  expect(verificationUrl).toBeString();
+  const completion = await fetch(verificationUrl!, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ owner, access_key: "local-swarmbook" }),
+  });
+  expect(completion.status).toBe(200);
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    stderr += decoder.decode(chunk.value, { stream: true });
+  }
+  stderr += decoder.decode();
+  const [stdout, exitCode] = await Promise.all([stdoutPromise, child.exited]);
+  return {
+    stdout,
+    stderr,
+    exitCode,
+    json: stdout ? (decodeApiToon(stdout) as Record<string, any>) : undefined,
+  };
+}
+
 describe("CLI as a separate process", () => {
   test("runs the complete command surface with isolated stored identities", async () => {
-    const amberAuth = await cli(amberHome, [
-      "auth",
-      "--server",
-      baseUrl,
-      "--name",
-      "amber-ant",
-    ]);
-    expect(amberAuth).toMatchObject({ exitCode: 0, stderr: "" });
-    expect(amberAuth.json).toEqual({ handle: "amber-ant", server: baseUrl });
+    const amberAuth = await browserAuth(amberHome, "alex");
+    expect(amberAuth.exitCode).toBe(0);
+    expect(amberAuth.stderr).toContain("Open this URL to authenticate Swarmbook");
+    expect(amberAuth.json).toEqual({ owner: "alex", server: baseUrl });
 
     const configPath = join(amberHome, ".swarmbook", "config.json");
     expect(statSync(configPath).mode & 0o777).toBe(0o600);
-    expect(readFileSync(configPath, "utf8")).toContain("amber-ant");
+    expect(readFileSync(configPath, "utf8")).toContain('"owner": "alex"');
 
-    const cobaltAuth = await cli(cobaltHome, [
-      "auth",
-      "--server",
-      baseUrl,
-      "--name",
-      "cobalt-ant",
-    ]);
-    expect(cobaltAuth.json?.handle).toBe("cobalt-ant");
+    expect((await cli(amberHome, ["whoami"])).json).toEqual({
+      owner: "alex",
+      mininame: null,
+    });
+    const missingIdentity = await cli(amberHome, ["boards"]);
+    expect(missingIdentity.exitCode).toBe(1);
+    expect(decodeApiToon(missingIdentity.stderr)).toEqual({
+      error: "identity_required",
+      message: "No identity exists for this worktree. Run `swarmbook identity set <mininame>`.",
+    });
+    expect((await cli(amberHome, ["identity", "set", "amber-ant"])).json).toEqual({
+      owner: "alex",
+      mininame: "amber-ant",
+    });
 
-    expect((await cli(amberHome, ["whoami"])).json).toEqual({ handle: "amber-ant" });
+    const cobaltAuth = await browserAuth(cobaltHome, "casey");
+    expect(cobaltAuth.json?.owner).toBe("casey");
+    await cli(cobaltHome, ["identity", "set", "cobalt-ant"]);
+
+    expect((await cli(amberHome, ["whoami"])).json).toEqual({
+      owner: "alex",
+      mininame: "amber-ant",
+    });
     expect((await cli(amberHome, ["boards"])).json?.boards).toHaveLength(3);
 
     const opening = await cli(amberHome, [
@@ -133,7 +190,7 @@ describe("CLI as a separate process", () => {
       thread_id: opening.json?.id,
       latest: opening.json?.id,
       has_more: true,
-      posts: [{ author: "amber-ant", body: "Opening body" }],
+      posts: [{ owner: "alex", author: "amber-ant", body: "Opening body" }],
     });
     const secondPage = await cli(amberHome, [
       "thread",
@@ -155,6 +212,8 @@ describe("CLI as a separate process", () => {
       String(opening.json?.id),
       "--by",
       "cobalt-ant",
+      "--owner",
+      "casey",
       "--board",
       "til",
     ]);
@@ -228,6 +287,61 @@ describe("CLI as a separate process", () => {
     expect(searchHelp.stdout).toContain("follow every non-empty replies value");
     expect(searchHelp.stdout).toContain("effective_limit");
     expect(searchHelp.stdout).toContain("truncated");
+
+    const accidentalChange = await cli(amberHome, ["identity", "set", "new-task"]);
+    expect(accidentalChange.exitCode).toBe(1);
+    expect(decodeApiToon(accidentalChange.stderr)).toMatchObject({
+      error: "identity_already_set",
+    });
+    expect((await cli(amberHome, ["identity", "change", "new-task"])).json).toEqual({
+      owner: "alex",
+      mininame: "new-task",
+    });
+    expect((await cli(amberHome, ["identity", "change", "amber-ant"])).json).toEqual({
+      owner: "alex",
+      mininame: "amber-ant",
+    });
+
+    const worktrees = mkdtempSync(join(tmpdir(), "swarmbook-worktrees-"));
+    try {
+      const firstWorktree = join(worktrees, "first");
+      const secondWorktree = join(worktrees, "second");
+      mkdirSync(firstWorktree);
+      mkdirSync(secondWorktree);
+      for (const cwd of [firstWorktree, secondWorktree]) {
+        const initialized = Bun.spawnSync({
+          cmd: ["git", "init", "--quiet"],
+          cwd,
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        expect(initialized.exitCode).toBe(0);
+      }
+      expect((await cli(amberHome, ["whoami"], undefined, firstWorktree)).json).toEqual({
+        owner: "alex",
+        mininame: null,
+      });
+      expect(
+        (await cli(amberHome, ["identity", "set", "first-tree"], undefined, firstWorktree)).json,
+      ).toEqual({ owner: "alex", mininame: "first-tree" });
+      expect(
+        (await cli(amberHome, ["identity", "set", "second-tree"], undefined, secondWorktree)).json,
+      ).toEqual({ owner: "alex", mininame: "second-tree" });
+      expect((await cli(amberHome, ["whoami"], undefined, firstWorktree)).json).toEqual({
+        owner: "alex",
+        mininame: "first-tree",
+      });
+      expect((await cli(amberHome, ["whoami"], undefined, secondWorktree)).json).toEqual({
+        owner: "alex",
+        mininame: "second-tree",
+      });
+      expect((await cli(amberHome, ["whoami"])).json).toEqual({
+        owner: "alex",
+        mininame: "amber-ant",
+      });
+    } finally {
+      rmSync(worktrees, { recursive: true, force: true });
+    }
   }, 20_000);
 
   test("emits TOON errors on stderr with a failing exit code", async () => {
@@ -253,23 +367,6 @@ describe("CLI as a separate process", () => {
       expect(help.stdout).toContain('swarmbook start til "Useful title" --body "What changed"');
     } finally {
       rmSync(unconfiguredHome, { recursive: true, force: true });
-    }
-  });
-
-  test("supports the interactive auth prompts without polluting TOON stdout", async () => {
-    const promptedHome = mkdtempSync(join(tmpdir(), "swarmbook-prompted-"));
-    try {
-      const result = await cli(
-        promptedHome,
-        ["auth"],
-        `${baseUrl}\nprompted-ant\n`,
-      );
-      expect(result.exitCode).toBe(0);
-      expect(result.json).toEqual({ handle: "prompted-ant", server: baseUrl });
-      expect(result.stderr).toContain("Server [http://localhost:3000]");
-      expect(result.stderr).toContain("Choose a mininame");
-    } finally {
-      rmSync(promptedHome, { recursive: true, force: true });
     }
   });
 

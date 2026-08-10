@@ -8,16 +8,19 @@ import { z } from "zod";
 import { AppError, appError } from "../core/errors";
 import type {
   Identity,
+  OwnerIdentity,
   QueryFilters,
   RecentFilters,
   SwarmbookService,
 } from "../core/service";
 import {
   BoardPage,
+  AuthorizationPage,
+  AuthorizationCompletePage,
   ErrorPage,
   HomePage,
+  LoginPage,
   NewThreadPage,
-  RegisterPage,
   SearchPage,
   ThreadPage,
 } from "../ui/views";
@@ -31,6 +34,7 @@ import {
 type Environment = {
   Variables: {
     identity: Identity;
+    ownerIdentity: OwnerIdentity;
   };
 };
 
@@ -48,7 +52,7 @@ export interface AppOptions {
   requestLogger?: ((entry: AccessLogEntry) => void) | false;
 }
 
-const registerSchema = z.object({ handle: z.string() }).strict();
+const identitySchema = z.object({ mininame: z.string() }).strict();
 const startThreadSchema = z
   .object({
     board: z.string(),
@@ -65,6 +69,7 @@ const filterSchema = z.object({
   after: z.string().optional(),
   before: z.string().optional(),
   by: z.array(z.string()).optional(),
+  owner: z.array(z.string()).optional(),
   board: z.array(z.string()).optional(),
   limit: z.coerce.number().int().positive().optional(),
 });
@@ -119,38 +124,53 @@ function filterInput(
     after: request.query("after"),
     before: request.query("before"),
     by: repeatedQueries(request, "by"),
+    owner: repeatedQueries(request, "owner"),
     board: repeatedQueries(request, "board"),
     limit: request.query("limit"),
     ...(includeSince ? { since: request.query("since") } : {}),
   };
 }
 
-function browserIdentity(
+function browserOwner(
   context: Context<Environment>,
   service: SwarmbookService,
-): Identity | undefined {
-  const key = getCookie(context, "swarmbook_key");
+): OwnerIdentity | undefined {
+  const key = getCookie(context, "swarmbook_owner_key");
   if (!key) return undefined;
   try {
-    return service.authenticate(key);
+    return service.authenticateOwner(key);
   } catch {
     return undefined;
   }
 }
 
-function requireBrowserIdentity(
+function requireBrowserOwner(
   context: Context<Environment>,
   service: SwarmbookService,
-): Identity {
-  const identity = browserIdentity(context, service);
+): OwnerIdentity {
+  const identity = context.get("ownerIdentity") ?? browserOwner(context, service);
   if (!identity) {
     throw appError(
-      "browser_identity_required",
-      "Choose a browser identity before posting.",
+      "browser_authentication_required",
+      "Sign in to use the Swarmbook UI.",
       401,
     );
   }
   return identity;
+}
+
+function setOwnerCookie(context: Context<Environment>, key: string): void {
+  setCookie(context, "swarmbook_owner_key", key, {
+    httpOnly: true,
+    sameSite: "Lax",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 365,
+    secure: new URL(context.req.url).protocol === "https:",
+  });
+}
+
+function safeNext(value: string | undefined): string {
+  return value?.startsWith("/") && !value.startsWith("//") ? value : "/";
 }
 
 function formString(body: Record<string, string | File>, name: string): string {
@@ -189,8 +209,10 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
     } finally {
       if (requestLogger && context.req.path !== "/health") {
         const identity =
-          (context.get("identity") as Identity | undefined) ??
-          browserIdentity(context, service);
+          context.get("identity") as Identity | undefined;
+        const ownerIdentity =
+          (context.get("ownerIdentity") as OwnerIdentity | undefined) ??
+          browserOwner(context, service);
         requestLogger({
           event: "http_request",
           at: new Date().toISOString(),
@@ -201,10 +223,32 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
             0,
             Math.round((performance.now() - startedAt) * 100) / 100,
           ),
-          actor: identity?.handle ?? "anonymous",
+          actor: identity
+            ? `${identity.owner}/${identity.mininame}`
+            : ownerIdentity?.owner ?? "anonymous",
         });
       }
     }
+  });
+
+  app.use("*", async (context, next) => {
+    const path = context.req.path;
+    if (
+      path === "/health" ||
+      path.startsWith("/api/") ||
+      path === "/login" ||
+      path.startsWith("/auth/cli/")
+    ) {
+      await next();
+      return;
+    }
+    const ownerIdentity = browserOwner(context, service);
+    if (!ownerIdentity) {
+      const nextPath = `${path}${new URL(context.req.url).search}`;
+      return context.redirect(`/login?next=${encodeURIComponent(nextPath)}`);
+    }
+    context.set("ownerIdentity", ownerIdentity);
+    await next();
   });
 
   app.get("/health", (context) => apiResponse(context, { status: "ok" }));
@@ -252,9 +296,58 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
     });
   });
 
-  api.post("/auth/register", jsonValidator(registerSchema), (context) => {
-    const { handle } = context.req.valid("json");
-    return apiResponse(context, service.register(handle), 201);
+  api.post("/auth/requests", (context) => {
+    const request = service.beginOwnerAuthorization();
+    return apiResponse(
+      context,
+      {
+        request_id: request.requestId,
+        poll_token: request.pollToken,
+        verification_url: new URL(`/auth/cli/${request.requestId}`, context.req.url).toString(),
+        expires_at: request.expiresAt,
+      },
+      201,
+    );
+  });
+
+  api.get("/auth/requests/:id", (context) => {
+    const authorization = context.req.header("authorization");
+    if (!authorization?.startsWith("Bearer ") || authorization.length <= 7) {
+      throw appError(
+        "poll_authentication_required",
+        "This authorization request requires its poll credential.",
+        401,
+      );
+    }
+    return apiResponse(
+      context,
+      service.pollOwnerAuthorization(
+        context.req.param("id"),
+        authorization.slice(7),
+      ),
+    );
+  });
+
+  api.use("/owner/*", async (context, next) => {
+    const authorization = context.req.header("authorization");
+    if (!authorization?.startsWith("Bearer ") || authorization.length <= 7) {
+      throw appError("owner_authentication_required", "Run `swarmbook auth` first.", 401);
+    }
+    context.set("ownerIdentity", service.authenticateOwner(authorization.slice(7)));
+    await next();
+  });
+
+  api.get("/owner/whoami", (context) =>
+    apiResponse(context, { owner: context.get("ownerIdentity").owner }),
+  );
+
+  api.post("/owner/identities", jsonValidator(identitySchema), (context) => {
+    const { mininame } = context.req.valid("json");
+    return apiResponse(
+      context,
+      service.createAgentIdentity(context.get("ownerIdentity"), mininame),
+      201,
+    );
   });
 
   api.use("*", async (context, next) => {
@@ -270,9 +363,13 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
     await next();
   });
 
-  api.get("/whoami", (context) =>
-    apiResponse(context, { handle: context.get("identity").handle }),
-  );
+  api.get("/whoami", (context) => {
+    const identity = context.get("identity");
+    return apiResponse(context, {
+      owner: identity.owner,
+      mininame: identity.mininame,
+    });
+  });
 
   api.get("/boards", (context) => apiResponse(context, service.listBoards()));
 
@@ -333,8 +430,59 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
   );
   app.route("/api", api);
 
+  app.get("/login", (context) =>
+    context.html(<LoginPage next={safeNext(context.req.query("next"))} />),
+  );
+  app.post("/login", async (context) => {
+    const body = await context.req.parseBody();
+    const next = safeNext(formString(body, "next"));
+    try {
+      const credential = service.issueOwnerCredential(
+        formString(body, "access_key"),
+        formString(body, "owner"),
+      );
+      setOwnerCookie(context, credential.key);
+      return context.redirect(next);
+    } catch (error) {
+      if (error instanceof AppError) {
+        return context.html(
+          <LoginPage next={next} message={error.message} />,
+          error.status as ContentfulStatusCode,
+        );
+      }
+      throw error;
+    }
+  });
+
+  app.get("/auth/cli/:id", (context) =>
+    context.html(<AuthorizationPage requestId={context.req.param("id")} />),
+  );
+  app.post("/auth/cli/:id", async (context) => {
+    const body = await context.req.parseBody();
+    try {
+      const credential = service.completeOwnerAuthorization(
+        context.req.param("id"),
+        formString(body, "access_key"),
+        formString(body, "owner"),
+      );
+      setOwnerCookie(context, credential.key);
+      return context.html(<AuthorizationCompletePage owner={credential.owner} />);
+    } catch (error) {
+      if (error instanceof AppError) {
+        return context.html(
+          <AuthorizationPage
+            requestId={context.req.param("id")}
+            message={error.message}
+          />,
+          error.status as ContentfulStatusCode,
+        );
+      }
+      throw error;
+    }
+  });
+
   app.get("/", (context) => {
-    const identity = browserIdentity(context, service);
+    const identity = requireBrowserOwner(context, service);
     return context.html(
       <HomePage
         identity={identity}
@@ -343,23 +491,9 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
     );
   });
 
-  app.get("/register", (context) => context.html(<RegisterPage />));
-  app.post("/register", async (context) => {
-    const body = await context.req.parseBody();
-    const registration = service.register(formString(body, "handle"));
-    setCookie(context, "swarmbook_key", registration.key, {
-      httpOnly: true,
-      sameSite: "Lax",
-      path: "/",
-      maxAge: 60 * 60 * 24 * 365,
-      secure: new URL(context.req.url).protocol === "https:",
-    });
-    return context.redirect("/");
-  });
-
   app.post("/logout", (context) => {
-    deleteCookie(context, "swarmbook_key", { path: "/" });
-    return context.redirect("/");
+    deleteCookie(context, "swarmbook_owner_key", { path: "/" });
+    return context.redirect("/login");
   });
 
   app.get("/boards/:name", (context) => {
@@ -381,7 +515,7 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
     });
     return context.html(
       <BoardPage
-        identity={browserIdentity(context, service)}
+        identity={requireBrowserOwner(context, service)}
         board={board}
         threads={preview.threads}
         page={page}
@@ -392,7 +526,7 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
   });
 
   app.get("/threads/new", (context) => {
-    const identity = requireBrowserIdentity(context, service);
+    const identity = requireBrowserOwner(context, service);
     return context.html(
       <NewThreadPage
         identity={identity}
@@ -419,14 +553,14 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
       return context.redirect(`/boards/${thread.board}/threads/${thread.thread_id}`);
     }
     return context.html(
-      <ThreadPage identity={browserIdentity(context, service)} thread={thread} />,
+      <ThreadPage identity={requireBrowserOwner(context, service)} thread={thread} />,
     );
   });
 
   app.post("/threads", async (context) => {
-    const identity = requireBrowserIdentity(context, service);
+    const ownerIdentity = requireBrowserOwner(context, service);
     const body = await context.req.parseBody();
-    const result = service.startThread(identity, {
+    const result = service.startThread(service.humanIdentity(ownerIdentity), {
       board: formString(body, "board"),
       title: formString(body, "title"),
       body: formString(body, "body"),
@@ -436,10 +570,14 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
   });
 
   app.post("/threads/:id/replies", async (context) => {
-    const identity = requireBrowserIdentity(context, service);
+    const ownerIdentity = requireBrowserOwner(context, service);
     const body = await context.req.parseBody();
     const threadId = Number(context.req.param("id"));
-    const reply = service.reply(identity, threadId, formString(body, "body"));
+    const reply = service.reply(
+      service.humanIdentity(ownerIdentity),
+      threadId,
+      formString(body, "body"),
+    );
     const thread = service.getThread(threadId, { limit: 1 });
     return context.redirect(`/boards/${thread.board}/threads/${thread.thread_id}#post-${reply.id}`);
   });
@@ -449,7 +587,7 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
     const results = query ? service.search(query, {}).results : [];
     return context.html(
       <SearchPage
-        identity={browserIdentity(context, service)}
+        identity={requireBrowserOwner(context, service)}
         query={query}
         results={results}
       />,
@@ -467,7 +605,7 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
       if (!context.req.path.startsWith("/api/")) {
         return context.html(
           <ErrorPage
-            identity={browserIdentity(context, service)}
+            identity={browserOwner(context, service)}
             code={error.code}
             message={error.message}
           />,

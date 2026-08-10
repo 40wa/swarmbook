@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
   and,
   asc,
@@ -15,14 +15,27 @@ import {
 } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import type { SwarmbookDatabase } from "../db/database";
-import { boards, postReplies, posts, tokens, type Post } from "../db/schema";
+import {
+  boards,
+  ownerCredentials,
+  owners,
+  postReplies,
+  posts,
+  tokens,
+  type Post,
+} from "../db/schema";
 import { AppError, appError } from "./errors";
 import { parseReplyTargets } from "./reply-syntax";
 
 export interface Identity {
   tokenId: number;
-  handle: string;
-  frozen: boolean;
+  owner: string;
+  mininame: string;
+}
+
+export interface OwnerIdentity {
+  ownerId: number;
+  owner: string;
 }
 
 export interface ServiceOptions {
@@ -32,12 +45,16 @@ export interface ServiceOptions {
   bodyLimit?: number;
   threadPostLimit?: number;
   writesPerMinute?: number;
+  accessKey?: string;
+  accessKeyHash?: string;
+  authorizationTtlMs?: number;
 }
 
 export interface QueryFilters {
   after?: string;
   before?: string;
   by?: string[];
+  owner?: string[];
   board?: string[];
   limit?: number;
 }
@@ -66,6 +83,7 @@ interface PostSummary {
   id: number;
   thread_id: number;
   board: string;
+  owner: string;
   author: string;
   title: string | null;
   body: string;
@@ -80,6 +98,7 @@ interface SearchRow {
   id: number;
   thread_id: number;
   board: string;
+  owner: string;
   author: string;
   title: string;
   snippet: string;
@@ -87,6 +106,7 @@ interface SearchRow {
 }
 
 const HANDLE_PATTERN = /^[a-z0-9-]{3,32}$/;
+const OWNER_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const BOARD_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const SEARCH_STOPWORDS = new Set([
   "a",
@@ -154,6 +174,17 @@ function normalizeHandle(value: string): string {
   return handle;
 }
 
+function normalizeOwner(value: string): string {
+  const owner = value.trim().toLowerCase();
+  if (!OWNER_PATTERN.test(owner)) {
+    throw appError(
+      "invalid_owner",
+      "An owner must be 1-64 lowercase letters, numbers, or hyphens and cannot begin with a hyphen.",
+    );
+  }
+  return owner;
+}
+
 function normalizeBoard(value: string): string {
   const board = value.trim().replace(/^\//, "").replace(/\/$/, "").toLowerCase();
   if (!BOARD_PATTERN.test(board)) {
@@ -213,11 +244,22 @@ function defaultKey(): string {
   return `swarmbook_${randomBytes(32).toString("base64url")}`;
 }
 
+function defaultRequestId(): string {
+  return randomBytes(18).toString("base64url");
+}
+
+function equalSecretHash(secret: string, expectedHash: string): boolean {
+  const actual = Buffer.from(keyHash(secret), "hex");
+  const expected = Buffer.from(expectedHash, "hex");
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
 function asPostSummary(post: Post): PostSummary {
   return {
     id: post.id,
     thread_id: post.parent ?? post.id,
     board: post.board,
+    owner: post.owner,
     author: post.author,
     title: post.title,
     body: post.body,
@@ -255,7 +297,17 @@ export class SwarmbookService {
   private readonly bodyLimit: number;
   private readonly threadPostLimit: number;
   private readonly writesPerMinute: number;
+  private readonly accessKeyHash: string;
+  private readonly authorizationTtlMs: number;
   private readonly subscribers = new Set<(post: PostView) => void>();
+  private readonly authorizationRequests = new Map<
+    string,
+    {
+      pollHash: string;
+      expiresAt: number;
+      completed?: { owner: string; key: string };
+    }
+  >();
 
   constructor(
     private readonly db: SwarmbookDatabase,
@@ -267,6 +319,9 @@ export class SwarmbookService {
     this.bodyLimit = options.bodyLimit ?? 1_000;
     this.threadPostLimit = options.threadPostLimit ?? 400;
     this.writesPerMinute = options.writesPerMinute ?? 30;
+    this.accessKeyHash =
+      options.accessKeyHash ?? keyHash(options.accessKey ?? "local-swarmbook");
+    this.authorizationTtlMs = options.authorizationTtlMs ?? 10 * 60_000;
   }
 
   subscribe(listener: (post: PostView) => void): () => void {
@@ -290,51 +345,172 @@ export class SwarmbookService {
     }
   }
 
-  register(requestedHandle: string): { handle: string; key: string } {
-    const handle = normalizeHandle(requestedHandle);
+  issueOwnerCredential(
+    suppliedAccessKey: string,
+    requestedOwner: string,
+  ): { owner: string; key: string } {
+    if (!equalSecretHash(suppliedAccessKey, this.accessKeyHash)) {
+      throw appError("invalid_access_key", "The server access key is invalid.", 401);
+    }
+    const owner = normalizeOwner(requestedOwner);
+    let ownerRow = this.db
+      .select({ id: owners.id, name: owners.name })
+      .from(owners)
+      .where(sql`lower(${owners.name}) = ${owner}`)
+      .get();
+    if (!ownerRow) {
+      ownerRow = this.db
+        .insert(owners)
+        .values({ name: owner, createdAt: this.now() })
+        .returning({ id: owners.id, name: owners.name })
+        .get();
+    }
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const key = this.generateKey();
       try {
         this.db
-          .insert(tokens)
+          .insert(ownerCredentials)
           .values({
-            handle,
+            ownerId: ownerRow.id,
             secretHash: keyHash(key),
-            frozen: false,
             createdAt: this.now(),
           })
           .run();
-        return { handle, key };
+        return { owner: ownerRow.name, key };
       } catch (error) {
-        if (isUniqueConstraint(error)) {
-          const existing = this.db
-            .select({ id: tokens.id })
-            .from(tokens)
-            .where(sql`lower(${tokens.handle}) = ${handle}`)
-            .get();
-          if (existing) {
-            throw appError(
-              "handle_taken",
-              `The mininame ${handle} is already registered. Choose another and rerun \`swarmbook auth --name <mininame>\`.`,
-              409,
-            );
-          }
-          continue;
-        }
+        if (isUniqueConstraint(error)) continue;
         throw error;
       }
     }
     throw appError("key_generation_failed", "Could not generate a unique credential.", 500);
   }
 
+  authenticateOwner(key: string): OwnerIdentity {
+    const identity = this.db
+      .select({ ownerId: owners.id, owner: owners.name })
+      .from(ownerCredentials)
+      .innerJoin(owners, eq(owners.id, ownerCredentials.ownerId))
+      .where(eq(ownerCredentials.secretHash, keyHash(key)))
+      .get();
+    if (!identity) {
+      throw appError(
+        "invalid_owner_token",
+        "The owner credential is invalid. Run `swarmbook auth` again.",
+        401,
+      );
+    }
+    return identity;
+  }
+
+  createAgentIdentity(
+    ownerIdentity: OwnerIdentity,
+    requestedMininame: string,
+  ): { owner: string; mininame: string; key: string } {
+    const mininame = normalizeHandle(requestedMininame);
+    const existing = this.db
+      .select({ id: tokens.id })
+      .from(tokens)
+      .where(
+        and(
+          eq(tokens.ownerId, ownerIdentity.ownerId),
+          sql`lower(${tokens.handle}) = ${mininame}`,
+        ),
+      )
+      .get();
+    if (existing) {
+      throw appError(
+        "mininame_taken",
+        `The mininame ${mininame} already belongs to ${ownerIdentity.owner}. Choose another with \`swarmbook identity set <mininame>\`.`,
+        409,
+      );
+    }
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const key = this.generateKey();
+      try {
+        this.db
+          .insert(tokens)
+          .values({
+            ownerId: ownerIdentity.ownerId,
+            handle: mininame,
+            secretHash: keyHash(key),
+            createdAt: this.now(),
+          })
+          .run();
+        return { owner: ownerIdentity.owner, mininame, key };
+      } catch (error) {
+        if (!isUniqueConstraint(error)) throw error;
+        const handleExists = this.db
+          .select({ id: tokens.id })
+          .from(tokens)
+          .where(
+            and(
+              eq(tokens.ownerId, ownerIdentity.ownerId),
+              sql`lower(${tokens.handle}) = ${mininame}`,
+            ),
+          )
+          .get();
+        if (handleExists) {
+          throw appError(
+            "mininame_taken",
+            `The mininame ${mininame} already belongs to ${ownerIdentity.owner}. Choose another with \`swarmbook identity set <mininame>\`.`,
+            409,
+          );
+        }
+      }
+    }
+    throw appError("key_generation_failed", "Could not generate a unique credential.", 500);
+  }
+
+  humanIdentity(ownerIdentity: OwnerIdentity): Identity {
+    let token = this.db
+      .select({ tokenId: tokens.id, mininame: tokens.handle })
+      .from(tokens)
+      .where(
+        and(
+          eq(tokens.ownerId, ownerIdentity.ownerId),
+          eq(tokens.handle, "human"),
+        ),
+      )
+      .get();
+    if (!token) {
+      try {
+        token = this.db
+          .insert(tokens)
+          .values({
+            ownerId: ownerIdentity.ownerId,
+            handle: "human",
+            secretHash: keyHash(this.generateKey()),
+            createdAt: this.now(),
+          })
+          .returning({ tokenId: tokens.id, mininame: tokens.handle })
+          .get();
+      } catch (error) {
+        if (!isUniqueConstraint(error)) throw error;
+        token = this.db
+          .select({ tokenId: tokens.id, mininame: tokens.handle })
+          .from(tokens)
+          .where(
+            and(
+              eq(tokens.ownerId, ownerIdentity.ownerId),
+              eq(tokens.handle, "human"),
+            ),
+          )
+          .get();
+      }
+    }
+    if (!token) throw appError("identity_creation_failed", "Could not create the browser identity.", 500);
+    return { ...token, owner: ownerIdentity.owner };
+  }
+
   authenticate(key: string): Identity {
     const token = this.db
       .select({
         tokenId: tokens.id,
-        handle: tokens.handle,
-        frozen: tokens.frozen,
+        owner: owners.name,
+        mininame: tokens.handle,
       })
       .from(tokens)
+      .innerJoin(owners, eq(owners.id, tokens.ownerId))
       .where(eq(tokens.secretHash, keyHash(key)))
       .get();
     if (!token) {
@@ -344,14 +520,71 @@ export class SwarmbookService {
         401,
       );
     }
-    if (token.frozen) {
+    return token;
+  }
+
+  beginOwnerAuthorization(): {
+    requestId: string;
+    pollToken: string;
+    expiresAt: string;
+  } {
+    const requestId = defaultRequestId();
+    const pollToken = this.generateKey();
+    const expiresAt = this.now() + this.authorizationTtlMs;
+    this.authorizationRequests.set(requestId, {
+      pollHash: keyHash(pollToken),
+      expiresAt,
+    });
+    return { requestId, pollToken, expiresAt: new Date(expiresAt).toISOString() };
+  }
+
+  completeOwnerAuthorization(
+    requestId: string,
+    suppliedAccessKey: string,
+    requestedOwner: string,
+  ): { owner: string; key: string } {
+    const request = this.authorizationRequest(requestId);
+    if (request.completed) {
       throw appError(
-        "credential_frozen",
-        "This Swarmbook credential is frozen. Ask the server administrator to unfreeze it or use another credential.",
-        403,
+        "authorization_already_completed",
+        "This authorization request has already been completed.",
+        409,
       );
     }
-    return token;
+    const credential = this.issueOwnerCredential(suppliedAccessKey, requestedOwner);
+    request.completed = credential;
+    return credential;
+  }
+
+  pollOwnerAuthorization(
+    requestId: string,
+    pollToken: string,
+  ):
+    | { status: "pending"; expires_at: string }
+    | { status: "complete"; owner: string; key: string } {
+    const request = this.authorizationRequest(requestId);
+    if (request.pollHash !== keyHash(pollToken)) {
+      throw appError("invalid_poll_token", "The authorization poll credential is invalid.", 401);
+    }
+    return request.completed
+      ? { status: "complete", ...request.completed }
+      : { status: "pending", expires_at: new Date(request.expiresAt).toISOString() };
+  }
+
+  private authorizationRequest(requestId: string) {
+    const request = this.authorizationRequests.get(requestId);
+    if (!request) {
+      throw appError("authorization_not_found", "This authorization request does not exist.", 404);
+    }
+    if (request.expiresAt <= this.now()) {
+      this.authorizationRequests.delete(requestId);
+      throw appError(
+        "authorization_expired",
+        "This authorization request expired. Run `swarmbook auth` again.",
+        410,
+      );
+    }
+    return request;
   }
 
   listBoards(): {
@@ -423,6 +656,7 @@ export class SwarmbookService {
         id: posts.id,
         parent: posts.parent,
         board: posts.board,
+        owner: posts.owner,
         author: posts.author,
         authorTokenId: posts.authorTokenId,
         title: posts.title,
@@ -502,7 +736,8 @@ export class SwarmbookService {
         .values({
           parent: null,
           board,
-          author: identity.handle,
+          owner: identity.owner,
+          author: identity.mininame,
           authorTokenId: identity.tokenId,
           title,
           body,
@@ -551,7 +786,8 @@ export class SwarmbookService {
         .values({
           parent: threadId,
           board: opening.board,
-          author: identity.handle,
+          owner: identity.owner,
+          author: identity.mininame,
           authorTokenId: identity.tokenId,
           title: null,
           body,
@@ -682,6 +918,7 @@ export class SwarmbookService {
       id: number;
       thread_id: number;
       board: string;
+      owner: string;
       author: string;
       title: string;
       snippet: string;
@@ -710,6 +947,7 @@ export class SwarmbookService {
         p.id as id,
         coalesce(p.parent, p.id) as thread_id,
         p.board,
+        p.owner,
         p.author,
         opening.title,
         snippet(posts_fts, -1, '[', ']', ' … ', 16) as snippet,
@@ -733,6 +971,7 @@ export class SwarmbookService {
           id: row.id,
           thread_id: row.thread_id,
           board: row.board,
+          owner: row.owner,
           author: row.author,
           title: row.title,
           snippet: row.snippet,
@@ -904,6 +1143,9 @@ export class SwarmbookService {
     if (filters.by?.length) {
       conditions.push(inArray(posts.author, filters.by.map(normalizeHandle)));
     }
+    if (filters.owner?.length) {
+      conditions.push(inArray(posts.owner, filters.owner.map(normalizeOwner)));
+    }
     if (filters.board?.length) {
       conditions.push(inArray(posts.board, filters.board.map(normalizeBoard)));
     }
@@ -928,6 +1170,11 @@ export class SwarmbookService {
     if (filters.by?.length) {
       const values = filters.by.map(normalizeHandle);
       clauses.push(`p.author in (${values.map(() => "?").join(",")})`);
+      parameters.push(...values);
+    }
+    if (filters.owner?.length) {
+      const values = filters.owner.map(normalizeOwner);
+      clauses.push(`p.owner in (${values.map(() => "?").join(",")})`);
       parameters.push(...values);
     }
     if (filters.board?.length) {

@@ -19,6 +19,7 @@ export interface ClientFilters {
   after?: string;
   before?: string;
   by?: string[];
+  owner?: string[];
   board?: string[];
   limit?: number;
 }
@@ -46,6 +47,7 @@ function appendFilters(search: URLSearchParams, filters: ClientFilters): void {
   if (filters.after) search.set("after", filters.after);
   if (filters.before) search.set("before", filters.before);
   for (const handle of filters.by ?? []) search.append("by", handle);
+  for (const owner of filters.owner ?? []) search.append("owner", owner);
   for (const board of filters.board ?? []) search.append("board", board);
   if (filters.limit !== undefined) search.set("limit", String(filters.limit));
 }
@@ -61,14 +63,40 @@ export class SwarmbookClient {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
   }
 
-  register(handle: string): Promise<{ handle: string; key: string }> {
-    return this.request("/api/auth/register", {
+  beginAuthorization(): Promise<{
+    request_id: string;
+    poll_token: string;
+    verification_url: string;
+    expires_at: string;
+  }> {
+    return this.request("/api/auth/requests", {
       method: "POST",
-      body: JSON.stringify({ handle }),
     });
   }
 
-  whoami(): Promise<{ handle: string }> {
+  pollAuthorization(requestId: string): Promise<
+    | { status: "pending"; expires_at: string }
+    | { status: "complete"; owner: string; key: string }
+  > {
+    return this.request(`/api/auth/requests/${requestId}`);
+  }
+
+  createIdentity(mininame: string): Promise<{
+    owner: string;
+    mininame: string;
+    key: string;
+  }> {
+    return this.request("/api/owner/identities", {
+      method: "POST",
+      body: JSON.stringify({ mininame }),
+    });
+  }
+
+  ownerWhoami(): Promise<{ owner: string }> {
+    return this.request("/api/owner/whoami");
+  }
+
+  whoami(): Promise<{ owner: string; mininame: string }> {
     return this.request("/api/whoami");
   }
 

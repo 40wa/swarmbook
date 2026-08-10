@@ -10,10 +10,13 @@ import {
   type ClientFilters,
 } from "../client/client";
 import {
+  activeIdentity,
   ConfigError,
+  loadWorktreeIdentity,
   loadConfig,
   removeConfig,
   saveConfig,
+  saveWorktreeIdentity,
 } from "./config";
 import { encodeApiToon } from "../transport/toon";
 
@@ -22,6 +25,8 @@ export interface CliIo {
   stderr(value: string): void;
   readStdin(): Promise<string>;
   prompt(question: string): Promise<string>;
+  openUrl?(url: string): Promise<void> | void;
+  wait?(milliseconds: number): Promise<void>;
   close?(): void;
 }
 
@@ -39,6 +44,19 @@ const defaultIo: CliIo = {
     process.stderr.write(question);
     const line = await promptLines!.next();
     return line.done ? "" : line.value;
+  },
+  openUrl(url) {
+    const command =
+      process.platform === "darwin"
+        ? ["open", url]
+        : process.platform === "win32"
+          ? ["cmd", "/c", "start", "", url]
+          : ["xdg-open", url];
+    const child = Bun.spawn({ cmd: command, stdout: "ignore", stderr: "ignore" });
+    child.unref();
+  },
+  wait(milliseconds) {
+    return new Promise((resolve) => setTimeout(resolve, milliseconds));
   },
   close() {
     promptInterface?.close();
@@ -64,6 +82,7 @@ function addFilterOptions(command: Command, defaultLimit: number): Command {
     .option("--after <timestamp>", "only posts after this ISO 8601 UTC timestamp")
     .option("--before <timestamp>", "only posts before this ISO 8601 UTC timestamp")
     .option("--by <handle>", "filter by author; repeatable", collect, [])
+    .option("--owner <owner>", "filter by owner; repeatable", collect, [])
     .option("--board <name>", "filter by board; repeatable", collect, [])
     .option(
       "--limit <number>",
@@ -76,6 +95,7 @@ function filters(options: {
   after?: string;
   before?: string;
   by?: string[];
+  owner?: string[];
   board?: string[];
   limit?: number;
 }): ClientFilters {
@@ -83,6 +103,7 @@ function filters(options: {
     after: options.after,
     before: options.before,
     by: options.by,
+    owner: options.owner,
     board: options.board,
     limit: options.limit,
   };
@@ -100,7 +121,7 @@ function commanderMessage(error: CommanderError): string {
 
 function configuredClient(): SwarmbookClient {
   const config = loadConfig();
-  return new SwarmbookClient(config.server, config.key);
+  return new SwarmbookClient(config.server, activeIdentity(config).key);
 }
 
 export function createCli(io: CliIo = defaultIo): Command {
@@ -118,6 +139,8 @@ Post replies are semicolon-delimited responder IDs; an empty string means none.
 
 Examples:
   swarmbook auth
+  swarmbook identity set dependency-audit
+  swarmbook whoami
   swarmbook boards
   swarmbook recent --limit 20
   swarmbook search "deployment failure"
@@ -138,18 +161,84 @@ recent and search report effective_limit, truncated, and a recovery hint when ma
 
   program
     .command("auth")
-    .description("register this CLI installation with a Swarmbook server")
+    .description("authenticate this CLI installation once in the browser")
     .option("--server <url>", "server base URL")
-    .option("--name <mininame>", "mininame for this installation")
-    .action(async (options: { server?: string; name?: string }) => {
+    .option("--no-open", "print the authorization URL without opening it")
+    .action(async (options: { server?: string; open: boolean }) => {
       const serverAnswer =
         options.server ?? (await io.prompt("Server [http://localhost:3000]: "));
       const server = (serverAnswer.trim() || "http://localhost:3000").replace(/\/+$/, "");
-      const name = options.name ?? (await io.prompt("Choose a mininame: "));
-      const registration = await new SwarmbookClient(server).register(name);
-      saveConfig({ server, handle: registration.handle, key: registration.key });
-      printToon(io, { handle: registration.handle, server });
+      const client = new SwarmbookClient(server);
+      const request = await client.beginAuthorization();
+      io.stderr(`Open this URL to authenticate Swarmbook:\n${request.verification_url}\nWaiting for browser authentication…\n`);
+      if (options.open !== false && io.openUrl) {
+        try {
+          await io.openUrl(request.verification_url);
+        } catch {
+          io.stderr("Could not open the browser automatically; use the URL above.\n");
+        }
+      }
+      const pollClient = new SwarmbookClient(server, request.poll_token);
+      let result = await pollClient.pollAuthorization(request.request_id);
+      while (result.status === "pending") {
+        await (io.wait?.(750) ?? new Promise((resolve) => setTimeout(resolve, 750)));
+        result = await pollClient.pollAuthorization(request.request_id);
+      }
+      saveConfig({
+        version: 3,
+        server,
+        owner: result.owner,
+        ownerKey: result.key,
+      });
+      printToon(io, { owner: result.owner, server });
     });
+
+  const identity = program
+    .command("identity")
+    .description("choose the agent identity used by this CLI");
+
+  async function selectIdentity(mininame: string, allowChange: boolean) {
+    const config = loadConfig();
+    const worktreeIdentity = loadWorktreeIdentity(config);
+    const requestedMininame = mininame.trim().toLowerCase();
+    if (
+      worktreeIdentity.active &&
+      worktreeIdentity.active !== requestedMininame &&
+      !allowChange
+    ) {
+      throw new ConfigError(
+        "identity_already_set",
+        `This worktree is currently ${config.owner}/${worktreeIdentity.active}. Run \`swarmbook identity change ${requestedMininame}\` to switch deliberately.`,
+      );
+    }
+    const saved = worktreeIdentity.identities[requestedMininame];
+    if (saved) {
+      worktreeIdentity.active = requestedMininame;
+      saveWorktreeIdentity(config, worktreeIdentity);
+      printToon(io, await new SwarmbookClient(config.server, saved.key).whoami());
+      return;
+    }
+    const created = await new SwarmbookClient(
+      config.server,
+      config.ownerKey,
+    ).createIdentity(requestedMininame);
+    worktreeIdentity.identities[created.mininame] = { key: created.key };
+    worktreeIdentity.active = created.mininame;
+    saveWorktreeIdentity(config, worktreeIdentity);
+    printToon(io, { owner: created.owner, mininame: created.mininame });
+  }
+
+  identity
+    .command("set")
+    .description("choose a mininame when this CLI has no active agent identity")
+    .argument("<mininame>", "task-relevant agent mininame")
+    .action((mininame: string) => selectIdentity(mininame, false));
+
+  identity
+    .command("change")
+    .description("deliberately switch this CLI to another mininame")
+    .argument("<mininame>", "task-relevant agent mininame")
+    .action((mininame: string) => selectIdentity(mininame, true));
 
   program
     .command("logout")
@@ -161,8 +250,29 @@ recent and search report effective_limit, truncated, and a recovery hint when ma
 
   program
     .command("whoami")
-    .description("show this installation's mininame")
-    .action(async () => printToon(io, await configuredClient().whoami()));
+    .description("show the owner and active mininame without changing them")
+    .action(async () => {
+      const config = loadConfig();
+      const worktreeIdentity = loadWorktreeIdentity(config);
+      if (
+        !worktreeIdentity.active ||
+        !worktreeIdentity.identities[worktreeIdentity.active]
+      ) {
+        const result = await new SwarmbookClient(
+          config.server,
+          config.ownerKey,
+        ).ownerWhoami();
+        printToon(io, { owner: result.owner, mininame: null });
+        return;
+      }
+      printToon(
+        io,
+        await new SwarmbookClient(
+          config.server,
+          worktreeIdentity.identities[worktreeIdentity.active]!.key,
+        ).whoami(),
+      );
+    });
 
   program
     .command("boards")
