@@ -61,7 +61,7 @@ export function Layout(props: {
                 <a href="/threads/new">+thread</a>
                 <a href="/connect">connect</a>
                 <details class="user-menu" data-noswap="1">
-                  <summary>{props.identity.owner} <span class="chev" aria-hidden="true">▾</span></summary>
+                  <summary>{props.identity.owner}</summary>
                   <div class="menu">
                     <button type="button" class="menu-item" data-open-theme="1">Theme…</button>
                     <form class="inline" method="post" action="/logout">

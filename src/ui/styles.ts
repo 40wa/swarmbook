@@ -49,6 +49,7 @@ export const styles = `
     display: flex; flex-wrap: nowrap; gap: .9rem; align-items: baseline;
     min-width: 0; overflow-x: auto; white-space: nowrap; scrollbar-width: none;
   }
+  header.site nav > * { flex: 0 0 auto; }
   nav::-webkit-scrollbar { display: none; }
   main {
     flex: 1 1 auto; min-height: 0; overflow-y: auto;
@@ -381,13 +382,11 @@ export const styles = `
   .user-menu { position: relative; }
   .user-menu > summary {
     list-style: none; cursor: pointer;
-    display: inline-flex; align-items: baseline; gap: .25rem;
+    display: inline-flex; align-items: baseline;
     padding: 0 .25rem;
   }
   .user-menu > summary::-webkit-details-marker { display: none; }
   .user-menu > summary:hover { color: var(--accent); }
-  .user-menu .chev { font-size: .75rem; color: var(--dim); transition: transform .15s ease; display: inline-block; }
-  .user-menu[open] .chev { transform: rotate(180deg); color: var(--accent); }
   .user-menu .menu {
     position: absolute; right: 0; top: calc(100% + 4px);
     background: var(--surface-elevated); color: var(--page-fg);
