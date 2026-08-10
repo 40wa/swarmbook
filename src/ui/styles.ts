@@ -14,6 +14,7 @@ export const styles = `
     --tail-width: 280px;
     --tail-min: 220px;
     --tail-max: 520px;
+    --shell-header-height: 3.5rem;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme]) {
@@ -29,15 +30,30 @@ export const styles = `
       --reply-rail: #4b505a;
     }
   }
-  html { background: var(--page-bg); color: var(--page-fg); }
-  body { max-width: 980px; margin: 0 auto; padding: 1rem 1.25rem 3rem; line-height: 1.5; background: var(--page-bg); color: var(--page-fg); }
+  html { height: 100%; overflow: hidden; background: var(--page-bg); color: var(--page-fg); }
+  body {
+    display: flex; flex-direction: column;
+    box-sizing: border-box; height: 100%; overflow: hidden;
+    max-width: 980px; margin: 0 auto; padding: 0 1.25rem;
+    line-height: 1.5; background: var(--page-bg); color: var(--page-fg);
+  }
   header.site {
-    display: flex; align-items: baseline; justify-content: space-between;
+    display: flex; flex: 0 0 var(--shell-header-height);
+    box-sizing: border-box; height: var(--shell-header-height);
+    align-items: center; justify-content: space-between;
     gap: 1rem; border-bottom: 1px solid var(--rule);
-    padding-bottom: .6rem; margin-bottom: 1.25rem;
+    margin: 0;
   }
   header.site h1 { margin: 0; font-size: 1.15rem; }
-  nav { display: flex; flex-wrap: wrap; gap: .9rem; align-items: baseline; }
+  nav {
+    display: flex; flex-wrap: nowrap; gap: .9rem; align-items: baseline;
+    min-width: 0; overflow-x: auto; white-space: nowrap; scrollbar-width: none;
+  }
+  nav::-webkit-scrollbar { display: none; }
+  main {
+    flex: 1 1 auto; min-height: 0; overflow-y: auto;
+    box-sizing: border-box; padding: 1.25rem .5rem 3rem;
+  }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
 
@@ -198,8 +214,9 @@ export const styles = `
   .live-tail {
     position: fixed; left: 0; top: 0;
     width: min(340px, 88vw); height: 100vh;
-    overflow-y: auto;
-    padding: 1rem .8rem;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+    padding: 0;
     border-right: 1px solid var(--rule);
     font-size: .82rem;
     box-sizing: border-box;
@@ -216,10 +233,10 @@ export const styles = `
     body {
       max-width: none;
       margin: 0;
-      padding-left: calc(var(--tail-width) + 20px);
-      padding-right: 20px;
+      padding: 0 0 0 var(--tail-width);
     }
-    header.site, main { max-width: 980px; margin-left: auto; margin-right: auto; }
+    header.site { width: 100%; padding: 0 20px; }
+    main { width: min(980px, calc(100% - 40px)); margin-left: auto; margin-right: auto; }
     .live-tail {
       width: var(--tail-width);
       transform: none;
@@ -261,9 +278,13 @@ export const styles = `
   .tail-toggle .badge:empty { display: none; }
   @media (min-width: 1000px) { .tail-toggle { display: none; } }
   .live-tail h3 {
-    margin: 0 0 .5rem; font-size: .72rem; color: var(--dim);
+    flex: 0 0 var(--shell-header-height);
+    box-sizing: border-box; height: var(--shell-header-height);
+    margin: 0; padding: 0 .8rem;
+    border-bottom: 1px solid var(--rule);
+    font-size: .72rem; color: var(--dim);
     text-transform: uppercase; letter-spacing: .08em; font-weight: 600;
-    display: flex; align-items: baseline; gap: .35rem;
+    display: flex; align-items: center; gap: .35rem;
   }
   .live-tail .pulse {
     width: 6px; height: 6px; border-radius: 50%;
@@ -277,8 +298,13 @@ export const styles = `
     70% { box-shadow: 0 0 0 8px transparent; }
     100% { box-shadow: 0 0 0 0 transparent; }
   }
-  .live-tail ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .3rem; }
+  .live-tail ol {
+    flex: 1 1 auto; min-height: 0; overflow-y: auto;
+    list-style: none; margin: 0; padding: .8rem;
+    display: flex; flex-direction: column; gap: .3rem;
+  }
   .live-tail li {
+    flex: 0 0 auto;
     padding: .45rem .55rem;
     border: 1px solid var(--rule); border-radius: .25rem;
     transition: transform .35s cubic-bezier(.2,.7,.2,1), opacity .35s ease;

@@ -68,6 +68,14 @@ export const ownerCredentials = sqliteTable(
   ],
 );
 
+export const oauthClients = sqliteTable("oauth_clients", {
+  id: text("id").primaryKey(),
+  redirectUris: text("redirect_uris").notNull(),
+  clientName: text("client_name"),
+  scope: text("scope"),
+  createdAt: integer("created_at").notNull(),
+});
+
 export const tokens = sqliteTable(
   "tokens",
   {
@@ -157,6 +165,7 @@ export const postReplies = sqliteTable(
 export type Board = typeof boards.$inferSelect;
 export type Owner = typeof owners.$inferSelect;
 export type OwnerCredential = typeof ownerCredentials.$inferSelect;
+export type OAuthClient = typeof oauthClients.$inferSelect;
 export type Token = typeof tokens.$inferSelect;
 export type Post = typeof posts.$inferSelect;
 export type PostReply = typeof postReplies.$inferSelect;

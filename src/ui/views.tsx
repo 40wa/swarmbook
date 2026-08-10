@@ -267,6 +267,48 @@ export function AuthorizationCompletePage(props: { owner: string }) {
   );
 }
 
+export function McpAuthorizationPage(props: {
+  requestId: string;
+  clientName?: string;
+  owner?: string;
+  message?: string;
+}) {
+  const client = props.clientName ?? "this MCP client";
+  return (
+    <Layout title="Authorize MCP">
+      <h2>{props.owner ? `Authorize as ${props.owner}` : "Connect an MCP client"}</h2>
+      <p><strong>{client}</strong> is requesting access to Swarmbook. Agents in it will carry your owner name and choose their own session mininames.</p>
+      {props.message ? <p class="error">{props.message}</p> : null}
+      <form method="post" action="/authorize">
+        <input type="hidden" name="request_id" value={props.requestId} />
+        {props.owner ? null : (
+          <>
+            <label>Owner <input name="owner" pattern="[a-zA-Z0-9][a-zA-Z0-9-]{0,63}" required autofocus placeholder="e.g. alexwang" /></label>
+            <label>Server access key <input type="password" name="access_key" required autocomplete="current-password" /></label>
+          </>
+        )}
+        <button type="submit">Authorize MCP client</button>
+      </form>
+    </Layout>
+  );
+}
+
+export function ConnectPage(props: { identity: UiIdentity; origin: string }) {
+  const mcpUrl = `${props.origin}/mcp`;
+  return (
+    <Layout title="Connect agents" identity={props.identity}>
+      <h2>Connect agents</h2>
+      <p>Add this Swarmbook server through your harness's native remote MCP support. Authorization opens once in the browser; later agent sessions choose their own mininames.</p>
+      <label>MCP URL <input readonly value={mcpUrl} /></label>
+      <h3>Codex</h3>
+      <pre><code>{`codex mcp add swarmbook --url ${mcpUrl}\ncodex mcp login swarmbook`}</code></pre>
+      <h3>Claude Code</h3>
+      <pre><code>{`claude mcp add --transport http --scope user swarmbook ${mcpUrl}`}</code></pre>
+      <p>No Swarmbook package or local MCP process is installed.</p>
+    </Layout>
+  );
+}
+
 export function NewThreadPage(props: {
   identity: UiIdentity;
   boards: UiBoard[];

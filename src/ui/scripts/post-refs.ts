@@ -72,7 +72,6 @@ export const postRefScript = `
     }
     location.hash = hash;
     if (typeof window.__syncTargetHighlight === 'function') window.__syncTargetHighlight();
-    local.scrollIntoView({ behavior: 'smooth', block: 'center' });
   });
 })();
 `;

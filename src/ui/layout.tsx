@@ -59,6 +59,7 @@ export function Layout(props: {
             {props.identity ? (
               <>
                 <a href="/threads/new">+thread</a>
+                <a href="/connect">connect</a>
                 <details class="user-menu" data-noswap="1">
                   <summary>{props.identity.owner} <span class="chev" aria-hidden="true">▾</span></summary>
                   <div class="menu">

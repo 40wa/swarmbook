@@ -57,6 +57,13 @@
       "when": 1786400000000,
       "tag": "0007_board_ids_and_soft_delete",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1786500000000,
+      "tag": "0008_low_hercules",
+      "breakpoints": true
     }
   ]
 }

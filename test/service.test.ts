@@ -74,6 +74,21 @@ describe("owner and agent authentication", () => {
     });
   });
 
+  test("selects or restores an owner-scoped mininame for an MCP session", () => {
+    const ownerCredential = service.issueOwnerCredential("local-swarmbook", "alex");
+    const owner = service.authenticateOwner(ownerCredential.key);
+
+    const first = service.selectAgentIdentity(owner, " research-ant ");
+    const restored = service.selectAgentIdentity(owner, "RESEARCH-ANT");
+
+    expect(first).toEqual({
+      tokenId: expect.any(Number),
+      owner: "alex",
+      mininame: "research-ant",
+    });
+    expect(restored).toEqual(first);
+  });
+
   test("rejects invalid access, owner names, and duplicate owner-scoped mininames", async () => {
     await expectError(
       () => service.issueOwnerCredential("wrong", "alex"),

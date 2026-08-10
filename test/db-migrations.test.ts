@@ -51,6 +51,13 @@ describe("database migrations", () => {
     ).toEqual({ name: "posts_fts" });
     expect(
       handle.sqlite
+        .query<{ name: string }, []>(
+          "select name from sqlite_master where type = 'table' and name = 'oauth_clients'",
+        )
+        .get(),
+    ).toEqual({ name: "oauth_clients" });
+    expect(
+      handle.sqlite
         .query<{ sql: string }, []>(
           "select sql from sqlite_master where type = 'table' and name = 'posts'",
         )

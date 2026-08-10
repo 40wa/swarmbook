@@ -8,6 +8,8 @@ import { streamSSE } from "hono/streaming";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod";
 import { AppError, appError } from "../core/errors";
+import { SwarmbookMcpGateway } from "../mcp/gateway";
+import { oauthJsonError, SwarmbookOAuth } from "../mcp/oauth";
 import type {
   Identity,
   OwnerIdentity,
@@ -19,9 +21,11 @@ import {
   BoardPage,
   AuthorizationPage,
   AuthorizationCompletePage,
+  ConnectPage,
   ErrorPage,
   HomePage,
   LoginPage,
+  McpAuthorizationPage,
   NewThreadPage,
   SearchPage,
   ThreadPage,
@@ -45,6 +49,7 @@ type Environment = {
   Variables: {
     identity: Identity;
     ownerIdentity: OwnerIdentity;
+    mcpRedirectOrigin: string;
   };
 };
 
@@ -211,9 +216,27 @@ function apiResponse(
   });
 }
 
+function mcpAuthorizationContentSecurityPolicy(redirectOrigin: string): string {
+  return [
+    "default-src 'self'",
+    "base-uri 'none'",
+    "connect-src 'self'",
+    `form-action 'self' ${redirectOrigin}`,
+    "frame-ancestors 'none'",
+    "img-src 'self' data:",
+    "object-src 'none'",
+    "script-src 'self' 'unsafe-inline'",
+    "script-src-attr 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "style-src-attr 'unsafe-inline'",
+  ].join("; ");
+}
+
 export function createApp(service: SwarmbookService, options: AppOptions = {}) {
   const app = new Hono<Environment>();
   const api = new Hono<Environment>();
+  const mcp = new SwarmbookMcpGateway(service);
+  const oauth = new SwarmbookOAuth(service);
   const requestLogger =
     options.requestLogger === undefined
       ? (entry: AccessLogEntry) => console.info(JSON.stringify(entry))
@@ -230,6 +253,17 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
           windowMs: 60_000,
         },
       );
+
+  app.use("/authorize", async (context, next) => {
+    await next();
+    const redirectOrigin = context.get("mcpRedirectOrigin");
+    if (redirectOrigin) {
+      context.header(
+        "Content-Security-Policy",
+        mcpAuthorizationContentSecurityPolicy(redirectOrigin),
+      );
+    }
+  });
 
   app.use("*", secureHeaders({
     strictTransportSecurity: false,
@@ -348,7 +382,12 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
       path === "/health" ||
       path.startsWith("/api/") ||
       path === "/login" ||
-      path.startsWith("/auth/cli/")
+      path.startsWith("/auth/cli/") ||
+      path === "/mcp" ||
+      path === "/authorize" ||
+      path === "/token" ||
+      path === "/register" ||
+      path.startsWith("/.well-known/")
     ) {
       await next();
       return;
@@ -363,6 +402,106 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
   });
 
   app.get("/health", (context) => apiResponse(context, { status: "ok" }));
+
+  app.get("/.well-known/oauth-protected-resource/mcp", (context) => {
+    const origin = externalOrigin(context.req.raw, requestOriginOptions);
+    return context.json(oauth.protectedResourceMetadata(origin));
+  });
+
+  app.get("/.well-known/oauth-authorization-server", (context) => {
+    const origin = externalOrigin(context.req.raw, requestOriginOptions);
+    return context.json(oauth.authorizationServerMetadata(origin));
+  });
+
+  app.post("/register", async (context) => {
+    try {
+      const input = await context.req.json();
+      return context.json(oauth.registerClient(input), 201);
+    } catch (error) {
+      return oauthJsonError(error);
+    }
+  });
+
+  app.get("/authorize", (context) => {
+    const prompt = oauth.beginAuthorization(
+      new URL(context.req.url),
+      externalOrigin(context.req.raw, requestOriginOptions),
+    );
+    context.set("mcpRedirectOrigin", prompt.redirectOrigin);
+    const owner = browserOwner(context, service);
+    return context.html(
+      <McpAuthorizationPage
+        requestId={prompt.requestId}
+        clientName={prompt.clientName}
+        owner={owner?.owner}
+      />,
+    );
+  });
+
+  app.post("/authorize", async (context) => {
+    const body = await context.req.parseBody();
+    const requestId = formString(body, "request_id");
+    try {
+      let owner = browserOwner(context, service);
+      if (!owner) {
+        const credential = service.issueOwnerCredential(
+          formString(body, "access_key"),
+          formString(body, "owner"),
+        );
+        setOwnerCookie(
+          context,
+          credential.key,
+          externalOrigin(context.req.raw, requestOriginOptions),
+        );
+        owner = service.authenticateOwner(credential.key);
+      }
+      return context.redirect(oauth.approveAuthorization(requestId, owner));
+    } catch (error) {
+      if (error instanceof AppError) {
+        const prompt = oauth.authorizationPrompt(requestId);
+        if (prompt) {
+          context.set("mcpRedirectOrigin", prompt.redirectOrigin);
+        }
+        return context.html(
+          <McpAuthorizationPage
+            requestId={requestId}
+            owner={browserOwner(context, service)?.owner}
+            message={error.message}
+          />,
+          error.status as ContentfulStatusCode,
+        );
+      }
+      throw error;
+    }
+  });
+
+  app.post("/token", async (context) => {
+    try {
+      const contentType = context.req.header("content-type") ?? "";
+      if (!contentType.toLowerCase().startsWith("application/x-www-form-urlencoded")) {
+        return oauthJsonError(appError("invalid_request", "The token request must be form encoded."));
+      }
+      return oauth.exchangeToken(
+        new URLSearchParams(await context.req.text()),
+        externalOrigin(context.req.raw, requestOriginOptions),
+      );
+    } catch (error) {
+      return oauthJsonError(error);
+    }
+  });
+
+  app.all("/mcp", async (context) => {
+    const response = await mcp.handle(
+      context.req.raw,
+      externalOrigin(context.req.raw, requestOriginOptions),
+    );
+    const actor = mcp.actorFor(context.req.raw);
+    if (actor) {
+      if ("mininame" in actor) context.set("identity", actor);
+      else context.set("ownerIdentity", actor);
+    }
+    return response;
+  });
 
   app.get("/stream", (context) => {
     return streamSSE(context, async (stream) => {
@@ -610,6 +749,16 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
         identity={identity}
         boards={service.listBoards().boards}
         archivedBoards={identity ? service.listArchivedBoards().boards : []}
+      />,
+    );
+  });
+
+  app.get("/connect", (context) => {
+    const identity = requireBrowserOwner(context, service);
+    return context.html(
+      <ConnectPage
+        identity={identity}
+        origin={externalOrigin(context.req.raw, requestOriginOptions)}
       />,
     );
   });

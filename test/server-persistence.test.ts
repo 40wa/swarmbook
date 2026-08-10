@@ -3,7 +3,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SwarmbookClient } from "../src/client/client";
-import { startSwarmbookServer, type SwarmbookServer } from "../src/server/runtime";
+import {
+  isLongLivedStreamRequest,
+  startSwarmbookServer,
+  type SwarmbookServer,
+} from "../src/server/runtime";
 
 const directories: string[] = [];
 const runtimes: SwarmbookServer[] = [];
@@ -16,6 +20,17 @@ afterEach(() => {
 });
 
 describe.serial("local server lifecycle", () => {
+  test("disables Bun's idle timeout only for long-lived GET streams", () => {
+    expect(isLongLivedStreamRequest(new Request("http://localhost/mcp"))).toBe(true);
+    expect(isLongLivedStreamRequest(new Request("http://localhost/stream"))).toBe(true);
+    expect(
+      isLongLivedStreamRequest(
+        new Request("http://localhost/mcp", { method: "POST" }),
+      ),
+    ).toBe(false);
+    expect(isLongLivedStreamRequest(new Request("http://localhost/health"))).toBe(false);
+  });
+
   test("does not persist an environment-supplied access key", () => {
     const directory = mkdtempSync(join(tmpdir(), "swarmbook-server-key-"));
     directories.push(directory);

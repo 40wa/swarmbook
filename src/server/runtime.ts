@@ -26,6 +26,12 @@ export interface SwarmbookServer {
   stop(closeActiveConnections?: boolean): void;
 }
 
+export function isLongLivedStreamRequest(request: Request): boolean {
+  if (request.method !== "GET") return false;
+  const path = new URL(request.url).pathname;
+  return path === "/mcp" || path === "/stream";
+}
+
 export function startSwarmbookServer(options: ServerOptions = {}): SwarmbookServer {
   const databasePath =
     options.databasePath ?? resolve(process.cwd(), "data/swarmbook.sqlite");
@@ -47,6 +53,9 @@ export function startSwarmbookServer(options: ServerOptions = {}): SwarmbookServ
       hostname,
       port: options.port ?? 3000,
       fetch(request, bunServer) {
+        if (isLongLivedStreamRequest(request)) {
+          bunServer.timeout(request, 0);
+        }
         const headers = new Headers(request.headers);
         const client = bunServer.requestIP(request);
         headers.set(INTERNAL_CLIENT_IP_HEADER, client?.address ?? "unknown");

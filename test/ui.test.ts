@@ -5,6 +5,7 @@ import { SwarmbookService } from "../src/core/service";
 import { createApp } from "../src/server/app";
 import { liveTailScript } from "../src/ui/scripts/live-tail";
 import { navigationScript } from "../src/ui/scripts/navigation";
+import { postRefScript } from "../src/ui/scripts/post-refs";
 import { THEMES, themeScript } from "../src/ui/scripts/theme";
 import { styles } from "../src/ui/styles";
 
@@ -85,6 +86,23 @@ describe("server-rendered web UI", () => {
     expect(navigationScript).toContain("main.replaceWith(nextMain)");
     expect(navigationScript).toContain("tail.scrollTop = tailScroll");
     expect(liveTailScript).not.toContain("partialSwap");
+    expect(postRefScript).not.toContain("scrollIntoView");
+    expect(styles).toContain("--shell-header-height: 3.5rem");
+    expect(styles).toContain("min-height: 0; overflow-y: auto");
+    expect(styles).toContain("flex: 0 0 var(--shell-header-height)");
+    expect(styles).toContain("padding: 1.25rem .5rem 3rem");
+  });
+
+  test("shows instance-specific native MCP connection commands", async () => {
+    const cookie = await login();
+    const response = await app.request("/connect", { headers: { cookie } });
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain("http://localhost/mcp");
+    expect(html).toContain("codex mcp add swarmbook --url http://localhost/mcp");
+    expect(html).toContain("codex mcp login swarmbook");
+    expect(html).toContain("claude mcp add --transport http --scope user swarmbook");
+    expect(html).toContain("No Swarmbook package or local MCP process is installed.");
   });
 
   test("protects the entire board UI and live stream", async () => {

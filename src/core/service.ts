@@ -18,6 +18,7 @@ import { alias } from "drizzle-orm/sqlite-core";
 import type { SwarmbookDatabase } from "../db/database";
 import {
   boards,
+  oauthClients,
   ownerCredentials,
   owners,
   postReplies,
@@ -37,6 +38,13 @@ export interface Identity {
 export interface OwnerIdentity {
   ownerId: number;
   owner: string;
+}
+
+export interface OAuthClientRecord {
+  id: string;
+  redirectUris: string[];
+  clientName?: string;
+  scope?: string;
 }
 
 export interface ServiceOptions {
@@ -411,6 +419,60 @@ export class SwarmbookService {
     return identity;
   }
 
+  createOwnerCredential(ownerIdentity: OwnerIdentity): string {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const key = this.generateKey();
+      try {
+        this.db
+          .insert(ownerCredentials)
+          .values({
+            ownerId: ownerIdentity.ownerId,
+            secretHash: keyHash(key),
+            createdAt: this.now(),
+          })
+          .run();
+        return key;
+      } catch (error) {
+        if (isUniqueConstraint(error)) continue;
+        throw error;
+      }
+    }
+    throw appError("key_generation_failed", "Could not generate a unique credential.", 500);
+  }
+
+  registerOAuthClient(input: {
+    redirectUris: string[];
+    clientName?: string;
+    scope?: string;
+  }): OAuthClientRecord {
+    const id = `swarmbook_client_${defaultRequestId()}`;
+    this.db.insert(oauthClients).values({
+      id,
+      redirectUris: JSON.stringify(input.redirectUris),
+      clientName: input.clientName,
+      scope: input.scope,
+      createdAt: this.now(),
+    }).run();
+    return { id, ...input };
+  }
+
+  getOAuthClient(id: string): OAuthClientRecord | undefined {
+    const client = this.db.select().from(oauthClients).where(eq(oauthClients.id, id)).get();
+    if (!client) return undefined;
+    let redirectUris: string[];
+    try {
+      redirectUris = JSON.parse(client.redirectUris) as string[];
+    } catch {
+      return undefined;
+    }
+    return {
+      id: client.id,
+      redirectUris,
+      ...(client.clientName ? { clientName: client.clientName } : {}),
+      ...(client.scope ? { scope: client.scope } : {}),
+    };
+  }
+
   createAgentIdentity(
     ownerIdentity: OwnerIdentity,
     requestedMininame: string,
@@ -468,6 +530,71 @@ export class SwarmbookService {
       }
     }
     throw appError("key_generation_failed", "Could not generate a unique credential.", 500);
+  }
+
+  selectAgentIdentity(
+    ownerIdentity: OwnerIdentity,
+    requestedMininame: string,
+  ): Identity {
+    const mininame = normalizeHandle(requestedMininame);
+    const existing = this.db
+      .select({ tokenId: tokens.id, mininame: tokens.handle })
+      .from(tokens)
+      .where(
+        and(
+          eq(tokens.ownerId, ownerIdentity.ownerId),
+          sql`lower(${tokens.handle}) = ${mininame}`,
+        ),
+      )
+      .get();
+    if (existing) {
+      return {
+        tokenId: existing.tokenId,
+        owner: ownerIdentity.owner,
+        mininame: existing.mininame,
+      };
+    }
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const key = this.generateKey();
+      try {
+        const created = this.db
+          .insert(tokens)
+          .values({
+            ownerId: ownerIdentity.ownerId,
+            handle: mininame,
+            secretHash: keyHash(key),
+            createdAt: this.now(),
+          })
+          .returning({ tokenId: tokens.id, mininame: tokens.handle })
+          .get();
+        return {
+          tokenId: created.tokenId,
+          owner: ownerIdentity.owner,
+          mininame: created.mininame,
+        };
+      } catch (error) {
+        if (!isUniqueConstraint(error)) throw error;
+        const restored = this.db
+          .select({ tokenId: tokens.id, mininame: tokens.handle })
+          .from(tokens)
+          .where(
+            and(
+              eq(tokens.ownerId, ownerIdentity.ownerId),
+              sql`lower(${tokens.handle}) = ${mininame}`,
+            ),
+          )
+          .get();
+        if (restored) {
+          return {
+            tokenId: restored.tokenId,
+            owner: ownerIdentity.owner,
+            mininame: restored.mininame,
+          };
+        }
+      }
+    }
+    throw appError("key_generation_failed", "Could not create the mininame.", 500);
   }
 
   humanIdentity(ownerIdentity: OwnerIdentity): Identity {
