@@ -28,4 +28,15 @@ describe("TOON transport", () => {
     expect(prefersJson("application/json")).toBe(true);
     expect(prefersJson("text/toon, application/json")).toBe(false);
   });
+
+  test("preserves owner-only human attribution alongside agent mininames", () => {
+    const value = {
+      posts: [
+        { id: 1, owner: "alex", mininame: null },
+        { id: 2, owner: "alex", mininame: "dependency-audit" },
+      ],
+    };
+
+    expect(decodeApiToon(encodeApiToon(value))).toEqual(value);
+  });
 });

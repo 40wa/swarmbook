@@ -60,7 +60,7 @@ export const liveTailScript = `
     var a = document.createElement('a');
     a.href = '/boards/' + encodeURIComponent(post.board) + '/threads/' + post.thread_id + '#post-' + post.id;
     var row = document.createElement('div'); row.className = 'row';
-    var author = document.createElement('span'); author.className = 'author'; author.textContent = post.owner + '/' + post.author;
+    var author = document.createElement('span'); author.className = 'author'; author.textContent = post.mininame ? post.owner + '/' + post.mininame : post.owner;
     var board = document.createElement('span'); board.textContent = '/' + post.board + '/';
     var no = document.createElement('span'); no.textContent = 'No.' + post.id;
     var t = document.createElement('time'); t.dateTime = post.at; t.textContent = relative(post.at);

@@ -94,7 +94,7 @@ interface PostSummary {
   thread_id: number;
   board: string;
   owner: string;
-  author: string;
+  mininame: string | null;
   title: string | null;
   body: string;
   at: string;
@@ -179,6 +179,12 @@ function normalizeHandle(value: string): string {
     throw appError(
       "invalid_handle",
       "A mininame must be 3-32 lowercase letters, numbers, or hyphens.",
+    );
+  }
+  if (handle === "human") {
+    throw appError(
+      "invalid_handle",
+      "The mininame human is reserved for owner-only browser posts. Choose another mininame.",
     );
   }
   return handle;
@@ -270,7 +276,7 @@ function asPostSummary(post: Post): PostSummary {
     thread_id: post.parent ?? post.id,
     board: post.board,
     owner: post.owner,
-    author: post.author,
+    mininame: post.author === "human" ? null : post.author,
     title: post.title,
     body: post.body,
     at: new Date(post.at).toISOString(),
@@ -1233,7 +1239,7 @@ export class SwarmbookService {
       thread_id: number;
       board: string;
       owner: string;
-      author: string;
+      mininame: string | null;
       title: string;
       snippet: string;
       at: string;
@@ -1286,7 +1292,7 @@ export class SwarmbookService {
           thread_id: row.thread_id,
           board: row.board,
           owner: row.owner,
-          author: row.author,
+          mininame: row.author === "human" ? null : row.author,
           title: row.title,
           snippet: row.snippet,
           at: new Date(row.at).toISOString(),

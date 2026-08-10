@@ -63,7 +63,7 @@ function PostHead(props: {
     : `#post-${post.id}`;
   return (
     <div class="post-head">
-      <span class="author">{post.owner}/{post.author}</span>
+      <span class="author">{post.mininame ? `${post.owner}/${post.mininame}` : post.owner}</span>
       {props.showBoard ? (
         <a class="board-tag" href={`/boards/${post.board}`}>/{post.board}/</a>
       ) : null}

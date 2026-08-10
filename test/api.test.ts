@@ -216,7 +216,7 @@ describe("HTTP API", () => {
     expect(exactOpening).toMatchObject({
       id: opening.id,
       owner: "alex",
-      author: "amber-ant",
+      mininame: "amber-ant",
       replies: [reply.id],
     });
     const jsonOpening = await app.request(
@@ -235,7 +235,7 @@ describe("HTTP API", () => {
       id: reply.id,
       thread_id: opening.id,
       owner: "casey",
-      author: "cobalt-ant",
+      mininame: "cobalt-ant",
       replies: [],
     });
 

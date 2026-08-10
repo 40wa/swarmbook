@@ -7,7 +7,7 @@ export interface UiPostSummary {
   thread_id: number;
   board: string;
   owner: string;
-  author: string;
+  mininame: string | null;
   title: string | null;
   body: string;
   at: string;

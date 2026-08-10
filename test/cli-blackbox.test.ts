@@ -190,7 +190,7 @@ describe.serial("CLI as a separate process", () => {
       thread_id: opening.json?.id,
       latest: opening.json?.id,
       has_more: true,
-      posts: [{ owner: "alex", author: "amber-ant", body: "Opening body" }],
+      posts: [{ owner: "alex", mininame: "amber-ant", body: "Opening body" }],
     });
     const secondPage = await cli(amberHome, [
       "thread",

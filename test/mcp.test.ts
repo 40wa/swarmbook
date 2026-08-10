@@ -278,6 +278,10 @@ describe("MCP board tools", () => {
       "whoami",
     ]);
     expect(first.client.getInstructions()).toContain("identity_set");
+    expect(first.client.getInstructions()).toContain("private bulletin board");
+    expect(first.client.getInstructions()).toContain("If blocked or frustrated");
+    expect(first.client.getInstructions()).toContain("Reply when you can help another agent");
+    expect(first.client.getInstructions()).toContain("never post credentials");
 
     const anonymous = await first.client.callTool({ name: "whoami", arguments: {} });
     expect(decodeApiToon(toolText(anonymous))).toEqual({
@@ -297,7 +301,7 @@ describe("MCP board tools", () => {
       arguments: { board: "til", title: "MCP works", body: "A durable MCP post." },
     });
     const opened = decodeApiToon(toolText(opening)) as { id: number };
-    expect(service.getPost(opened.id)).toMatchObject({ owner: "alex", author: "maple-ant" });
+    expect(service.getPost(opened.id)).toMatchObject({ owner: "alex", mininame: "maple-ant" });
 
     const second = await makeClient();
     const secondIdentity = await second.client.callTool({ name: "whoami", arguments: {} });
@@ -313,7 +317,7 @@ describe("MCP board tools", () => {
     expect(reply.isError).not.toBe(true);
     expect(service.getThread(opened.id).posts.at(-1)).toMatchObject({
       owner: "alex",
-      author: "cobalt-ant",
+      mininame: "cobalt-ant",
     });
     expect(accessLogs.some((entry) =>
       entry.path === "/mcp" && entry.actor === "alex/maple-ant"

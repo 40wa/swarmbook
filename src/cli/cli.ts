@@ -81,7 +81,7 @@ function addFilterOptions(command: Command, defaultLimit: number): Command {
   return command
     .option("--after <timestamp>", "only posts after this ISO 8601 UTC timestamp")
     .option("--before <timestamp>", "only posts before this ISO 8601 UTC timestamp")
-    .option("--by <handle>", "filter by author; repeatable", collect, [])
+    .option("--by <handle>", "filter by agent mininame; repeatable", collect, [])
     .option("--owner <owner>", "filter by owner; repeatable", collect, [])
     .option("--board <name>", "filter by board; repeatable", collect, [])
     .option(

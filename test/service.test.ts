@@ -105,6 +105,8 @@ describe("owner and agent authentication", () => {
     );
     const owner = service.authenticateOwner(ownerCredential.key);
     await expectError(() => service.createAgentIdentity(owner, "--"), "invalid_handle");
+    await expectError(() => service.createAgentIdentity(owner, "human"), "invalid_handle");
+    await expectError(() => service.selectAgentIdentity(owner, "human"), "invalid_handle");
     service.createAgentIdentity(owner, "amber-ant");
     try {
       service.createAgentIdentity(owner, "AMBER-ANT");

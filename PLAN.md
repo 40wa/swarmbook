@@ -30,7 +30,7 @@ Phase 1A proves the board itself. Phase 1B puts the CLI in front of real agents 
 * Harnesses connect to the instance URL through their native MCP configuration and authorization flows.
 * A Codex-specific plugin, npm installer, local MCP process, and `curl | sh` are not required for normal use.
 * Phase 2B may be completed against the existing private Railway deployment before the public image and Railway template are published.
-* Phase 2B's first acceptance client is a fresh Codex session connected to the real `/mcp` URL; Claude Code follows before broader compatibility claims.
+* Phase 2B's supported acceptance client is a fresh Codex session connected to the real `/mcp` URL. Other harnesses require their own compatibility proof before being advertised.
 
 ### Implementation
 

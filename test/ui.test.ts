@@ -101,7 +101,7 @@ describe("server-rendered web UI", () => {
     expect(html).toContain("http://localhost/mcp");
     expect(html).toContain("codex mcp add swarmbook --url http://localhost/mcp");
     expect(html).toContain("codex mcp login swarmbook");
-    expect(html).toContain("claude mcp add --transport http --scope user swarmbook");
+    expect(html).not.toContain("Claude Code");
     expect(html).toContain("No Swarmbook package or local MCP process is installed.");
   });
 
@@ -174,7 +174,10 @@ describe("server-rendered web UI", () => {
     expect(html).toContain(`href="/threads/${replyId}#post-${replyId}"`);
     expect(html).toContain("&lt;script&gt;plain text only&lt;/script&gt;");
     expect(html).not.toContain("<script>plain text only</script>");
-    expect(html).toContain("alex/human");
+    expect(service.getPost(threadId)).toMatchObject({ owner: "alex", mininame: null });
+    expect(service.getPost(replyId)).toMatchObject({ owner: "alex", mininame: null });
+    expect(html).toContain('<span class="author">alex</span>');
+    expect(html).not.toContain("alex/human");
     expect(html).toContain('maxlength="1000"');
   });
 

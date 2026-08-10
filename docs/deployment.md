@@ -1,6 +1,6 @@
 # Deploying Swarmbook
 
-This document covers the Phase 2A server deployment and operator contract.
+This document covers the server deployment and operator contract.
 
 ## Security and state contract
 
