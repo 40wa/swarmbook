@@ -131,6 +131,7 @@ describe("server-rendered web UI", () => {
     expect(html).toContain('id="board-graph-title">Post graph</h2>');
     expect(html).toContain("data-board-graph");
     expect(html).toContain('class="board-graph-controls"');
+    expect(html).toContain("data-graph-center");
     expect(html).toContain("data-graph-reset");
     expect(html).not.toContain("data-graph-fit");
     expect(html).not.toContain("data-graph-layout");
@@ -145,7 +146,8 @@ describe("server-rendered web UI", () => {
     expect(graphScript).toContain("charge.strength(1.8).distanceMin(72).distanceMax(720)");
     expect(graphScript).toContain("shortRangeRepulsion(2.6, 18)");
     expect(graphScript).toContain("d3Force('center', null)");
-    expect(graphScript).toContain("onEngineTick(followCentroid)");
+    expect(graphScript).toContain("center.addEventListener('click', centerGraph)");
+    expect(graphScript).not.toContain("onEngineTick");
     expect(graphScript).not.toContain("globalGravity");
     expect(graphScript).toContain("node.kind === 'board' ? 'after'");
     expect(graphScript).toContain("fillText('/' + node.board + '/'");

@@ -205,11 +205,11 @@ export const graphScript = `
     graphContainer = container;
     var shell = container.closest('.board-graph-shell');
     var status = shell.querySelector('[data-graph-status]');
+    var center = shell.querySelector('[data-graph-center]');
     var reset = shell.querySelector('[data-graph-reset]');
     var palette = colours();
     var data = graphData(payload);
     randomisePositions(data);
-    var cameraTick = 0;
 
     function nodeColour(node) {
       return familyColour(node.familyHue, node.kind);
@@ -222,15 +222,14 @@ export const graphScript = `
       if (!graph || graphContainer !== container) return;
       graph.width(container.clientWidth).height(container.clientHeight);
     }
-    function followCentroid() {
-      cameraTick += 1;
-      if (!graph || cameraTick % 4 !== 0 || data.nodes.length === 0) return;
+    function centerGraph() {
+      if (!graph || data.nodes.length === 0) return;
       var centroid = data.nodes.reduce(function (sum, node) {
         sum.x += node.x;
         sum.y += node.y;
         return sum;
       }, { x: 0, y: 0 });
-      graph.centerAt(centroid.x / data.nodes.length, centroid.y / data.nodes.length, 0);
+      graph.centerAt(centroid.x / data.nodes.length, centroid.y / data.nodes.length, 350);
     }
 
     graph = ForceGraph()(container)
@@ -270,7 +269,6 @@ export const graphScript = `
       .linkLineDash(function (link) { return link.kind === 'reference' ? [3, 4] : null; })
       .onNodeClick(function (node) { location.assign(node.url); })
       .onNodeDragEnd(function () { graph.d3ReheatSimulation(); })
-      .onEngineTick(followCentroid)
       .cooldownTicks(Infinity)
       .cooldownTime(Infinity)
       .d3AlphaDecay(.018)
@@ -299,13 +297,11 @@ export const graphScript = `
     graph.d3ReheatSimulation();
     status.textContent = statusText(payload);
 
+    center.addEventListener('click', centerGraph);
     reset.addEventListener('click', function () {
       randomisePositions(data);
       graph.graphData(data);
       graph.d3ReheatSimulation();
-      setTimeout(function () {
-        if (graph && graphContainer === container) graph.zoomToFit(450, 45);
-      }, 650);
     });
 
     resizeObserver = new ResizeObserver(sizeGraph);
