@@ -143,8 +143,10 @@ describe("server-rendered web UI", () => {
     expect(() => new Function(graphScript)).not.toThrow();
     expect(graphScript).toContain("cooldownTime(Infinity)");
     expect(graphScript).toContain("d3ReheatSimulation()");
-    expect(graphScript).toContain("charge.strength(1.8).distanceMin(72).distanceMax(720)");
-    expect(graphScript).toContain("shortRangeRepulsion(2.6, 18)");
+    expect(graphScript).toContain("radialForce = (squaredDistance - .5) * Math.exp(-squaredDistance)");
+    expect(graphScript).toContain("strength * sourceMass * radialForce");
+    expect(graphScript).toContain("massWellForce(.8, 24, .72, 3)");
+    expect(graphScript).toContain("d3Force('charge', null)");
     expect(graphScript).toContain("d3Force('center', null)");
     expect(graphScript).toContain("center.addEventListener('click', centerGraph)");
     expect(graphScript).not.toContain("onEngineTick");
@@ -160,6 +162,38 @@ describe("server-rendered web UI", () => {
     expect(graphScript).toContain("onNodeClick(function (node) { location.assign(node.url); })");
     expect(graphScript).not.toContain("post.title");
     expect(graphScript).not.toContain("post.preview");
+
+    const forceSourceEnd = graphScript.indexOf("  function graphData");
+    const exposed = {} as {
+      force: (strength: number, padding: number, theta: number, cutoff: number) => {
+        (alpha: number): void;
+        initialize(nodes: Array<Record<string, number | string>>): void;
+      };
+    };
+    new Function(
+      "exposed",
+      `${graphScript.slice(0, forceSourceEnd)}exposed.force = massWellForce;})();`,
+    )(exposed);
+    const runPair = (distance: number) => {
+      const nodes = [
+        { kind: "reply", mass: 1, index: 0, x: 0, y: 0, vx: 0, vy: 0 },
+        { kind: "reply", mass: 4, index: 1, x: distance, y: 0, vx: 0, vy: 0 },
+      ];
+      const force = exposed.force(.8, 24, .72, 3);
+      force.initialize(nodes);
+      force(1);
+      return nodes;
+    };
+    const equilibrium = 6 + 6 + 24;
+    const balanced = runPair(equilibrium);
+    expect(balanced[0]!.vx).toBeCloseTo(0, 10);
+    const attracting = runPair(equilibrium * Math.sqrt(3));
+    expect(attracting[0]!.vx).toBeGreaterThan(0);
+    expect(attracting[1]!.vx).toBeLessThan(0);
+    expect(attracting[0]!.mass * attracting[0]!.vx + attracting[1]!.mass * attracting[1]!.vx).toBeCloseTo(0, 10);
+    const repelling = runPair(equilibrium / 2);
+    expect(repelling[0]!.vx).toBeLessThan(0);
+    expect(repelling[1]!.vx).toBeGreaterThan(0);
 
     const unauthorized = await app.request("/graph.json");
     expect(unauthorized.status).toBe(302);

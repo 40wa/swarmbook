@@ -56,58 +56,146 @@ export const graphScript = `
     return 6;
   }
 
-  function shortRangeRepulsion(strength, padding) {
+  var WELL_ZERO = Math.sqrt(.5);
+
+  function buildMassCell(bodies, x0, y0, size, depth) {
+    var mass = 0;
+    var weightedX = 0;
+    var weightedY = 0;
+    var weightedRadius = 0;
+    var maximumRadius = 0;
+    bodies.forEach(function (body) {
+      mass += body.mass;
+      weightedX += body.x * body.mass;
+      weightedY += body.y * body.mass;
+      weightedRadius += nodeRadius(body) * body.mass;
+      maximumRadius = Math.max(maximumRadius, nodeRadius(body));
+    });
+    var cell = {
+      x0: x0,
+      y0: y0,
+      size: size,
+      mass: mass,
+      x: weightedX / mass,
+      y: weightedY / mass,
+      radius: weightedRadius / mass,
+      maximumRadius: maximumRadius,
+      bodies: null,
+      children: null
+    };
+    if (bodies.length <= 6 || depth >= 16) {
+      cell.bodies = bodies;
+      return cell;
+    }
+
+    var half = size / 2;
+    var middleX = x0 + half;
+    var middleY = y0 + half;
+    var groups = [[], [], [], []];
+    bodies.forEach(function (body) {
+      var quadrant = (body.x >= middleX ? 1 : 0) + (body.y >= middleY ? 2 : 0);
+      groups[quadrant].push(body);
+    });
+    cell.children = groups.map(function (group, quadrant) {
+      if (group.length === 0) return null;
+      return buildMassCell(
+        group,
+        x0 + (quadrant % 2) * half,
+        y0 + (quadrant > 1 ? half : 0),
+        half,
+        depth + 1
+      );
+    });
+    return cell;
+  }
+
+  function buildMassTree(nodes) {
+    if (nodes.length === 0) return null;
+    var minimumX = Infinity;
+    var minimumY = Infinity;
+    var maximumX = -Infinity;
+    var maximumY = -Infinity;
+    nodes.forEach(function (node) {
+      minimumX = Math.min(minimumX, node.x);
+      minimumY = Math.min(minimumY, node.y);
+      maximumX = Math.max(maximumX, node.x);
+      maximumY = Math.max(maximumY, node.y);
+    });
+    var size = Math.max(1, maximumX - minimumX, maximumY - minimumY);
+    return buildMassCell(nodes, minimumX, minimumY, size, 0);
+  }
+
+  function massWellForce(strength, padding, theta, cutoff) {
     var nodes = [];
     function force(alpha) {
-      var cellSize = 90;
-      var buckets = {};
-      nodes.forEach(function (node, index) {
-        var cellX = Math.floor(node.x / cellSize);
-        var cellY = Math.floor(node.y / cellSize);
-        var key = cellX + ':' + cellY;
-        if (!buckets[key]) buckets[key] = [];
-        buckets[key].push(index);
-      });
+      var tree = buildMassTree(nodes);
+      if (!tree) return;
 
-      nodes.forEach(function (node, index) {
-        var cellX = Math.floor(node.x / cellSize);
-        var cellY = Math.floor(node.y / cellSize);
-        for (var offsetX = -1; offsetX <= 1; offsetX += 1) {
-          for (var offsetY = -1; offsetY <= 1; offsetY += 1) {
-            var neighbours = buckets[(cellX + offsetX) + ':' + (cellY + offsetY)] || [];
-            neighbours.forEach(function (otherIndex) {
-              if (otherIndex <= index) return;
-              var other = nodes[otherIndex];
-              var dx = other.x - node.x;
-              var dy = other.y - node.y;
-              var distanceSquared = dx * dx + dy * dy;
-              if (distanceSquared === 0) {
-                dx = ((index * 17 + otherIndex * 13) % 11 - 5) * .01 || .01;
-                dy = ((index * 23 + otherIndex * 19) % 13 - 6) * .01 || .01;
-                distanceSquared = dx * dx + dy * dy;
-              }
-              var minimumDistance = nodeRadius(node) + nodeRadius(other) + padding;
-              if (distanceSquared >= minimumDistance * minimumDistance) return;
-              var distance = Math.sqrt(distanceSquared);
-              var impulse = (minimumDistance - distance) / minimumDistance * strength * alpha;
-              var forceX = dx / distance * impulse;
-              var forceY = dy / distance * impulse;
-              node.vx -= forceX;
-              node.vy -= forceY;
-              other.vx += forceX;
-              other.vy += forceY;
-            });
-          }
+      function interact(node, sourceX, sourceY, sourceMass, sourceRadius) {
+        var dx = sourceX - node.x;
+        var dy = sourceY - node.y;
+        var distanceSquared = dx * dx + dy * dy;
+        if (distanceSquared === 0) {
+          dx = ((node.index * 17) % 11 - 5) * .01 || .01;
+          dy = ((node.index * 23) % 13 - 6) * .01 || .01;
+          distanceSquared = dx * dx + dy * dy;
         }
-      });
+        var distance = Math.sqrt(distanceSquared);
+        var equilibrium = nodeRadius(node) + sourceRadius + padding;
+        var scaledDistance = distance * WELL_ZERO / equilibrium;
+        if (scaledDistance > cutoff) return;
+        var squaredDistance = scaledDistance * scaledDistance;
+        var radialForce = (squaredDistance - .5) * Math.exp(-squaredDistance);
+        var acceleration = strength * sourceMass * radialForce * alpha;
+        node.vx += dx / distance * acceleration;
+        node.vy += dy / distance * acceleration;
+      }
+
+      function visit(node, cell) {
+        var nearestX = Math.max(cell.x0, Math.min(node.x, cell.x0 + cell.size));
+        var nearestY = Math.max(cell.y0, Math.min(node.y, cell.y0 + cell.size));
+        var nearestDistance = Math.hypot(node.x - nearestX, node.y - nearestY);
+        var maximumRange = (nodeRadius(node) + cell.maximumRadius + padding) / WELL_ZERO * cutoff;
+        if (nearestDistance > maximumRange) return;
+
+        if (cell.bodies) {
+          cell.bodies.forEach(function (other) {
+            if (other !== node) interact(node, other.x, other.y, other.mass, nodeRadius(other));
+          });
+          return;
+        }
+
+        var dx = cell.x - node.x;
+        var dy = cell.y - node.y;
+        var distance = Math.hypot(dx, dy);
+        var containsNode = node.x >= cell.x0 && node.x <= cell.x0 + cell.size &&
+          node.y >= cell.y0 && node.y <= cell.y0 + cell.size;
+        if (!containsNode && distance > 0 && cell.size / distance < theta) {
+          interact(node, cell.x, cell.y, cell.mass, cell.radius);
+          return;
+        }
+        cell.children.forEach(function (child) {
+          if (child) visit(node, child);
+        });
+      }
+
+      nodes.forEach(function (node) { visit(node, tree); });
     }
-    force.initialize = function (nextNodes) { nodes = nextNodes || []; };
+    force.initialize = function (nextNodes) {
+      nodes = nextNodes || [];
+      nodes.forEach(function (node, index) { node.index = index; });
+    };
     return force;
   }
 
   function graphData(payload) {
     var nodes = [];
     var boardFamilies = {};
+    var threadSizes = {};
+
+    payload.posts.forEach(function (post) {
+      threadSizes[post.thread_id] = (threadSizes[post.thread_id] || 0) + 1;
+    });
 
     payload.boards.forEach(function (board, index) {
       var hue = FAMILY_HUES[index % FAMILY_HUES.length];
@@ -118,6 +206,7 @@ export const graphScript = `
         board: board.name,
         description: board.description,
         postCount: board.post_count,
+        mass: 3 + Math.log1p(board.post_count) * .55,
         familyHue: hue,
         url: '/boards/' + encodeURIComponent(board.name)
       });
@@ -132,6 +221,7 @@ export const graphScript = `
         threadId: post.thread_id,
         kind: post.kind,
         board: post.board,
+        mass: 1.5 + Math.log1p(threadSizes[post.thread_id] || 1) * .4,
         familyHue: family.hue,
         url: '/boards/' + encodeURIComponent(post.board) + '/threads/' + post.thread_id + '#post-' + post.id
       });
@@ -146,6 +236,7 @@ export const graphScript = `
         threadId: post.thread_id,
         kind: post.kind,
         board: post.board,
+        mass: 1,
         familyHue: family.hue,
         url: '/boards/' + encodeURIComponent(post.board) + '/threads/' + post.thread_id + '#post-' + post.id
       });
@@ -271,28 +362,25 @@ export const graphScript = `
       .onNodeDragEnd(function () { graph.d3ReheatSimulation(); })
       .cooldownTicks(Infinity)
       .cooldownTime(Infinity)
-      .d3AlphaDecay(.018)
-      .d3VelocityDecay(.48);
+      .d3AlphaDecay(.01)
+      .d3VelocityDecay(.35);
 
-    var charge = graph.d3Force('charge');
-    if (charge && charge.strength) {
-      charge.strength(1.8).distanceMin(72).distanceMax(720);
-    }
+    graph.d3Force('charge', null);
     var linkForce = graph.d3Force('link');
     if (linkForce && linkForce.distance) {
       linkForce
         .distance(function (link) {
-          if (link.kind === 'contains') return 70;
-          if (link.kind === 'reference') return 125;
-          return 23;
+          if (link.kind === 'contains') return 90;
+          if (link.kind === 'reference') return 140;
+          return 32;
         })
         .strength(function (link) {
-          if (link.kind === 'contains') return .9;
-          if (link.kind === 'reference') return .04;
-          return .82;
+          if (link.kind === 'contains') return .18;
+          if (link.kind === 'reference') return .025;
+          return .32;
         });
     }
-    graph.d3Force('near-repulsion', shortRangeRepulsion(2.6, 18));
+    graph.d3Force('mass-well', massWellForce(.8, 24, .72, 3));
     graph.d3Force('center', null);
     graph.d3ReheatSimulation();
     status.textContent = statusText(payload);
