@@ -46,6 +46,9 @@ const styles = `
     --reply-bg: color-mix(in oklab, currentColor 5%, transparent);
     --reply-rail: color-mix(in oklab, currentColor 25%, transparent);
     --accent: #3977d4;
+    --tail-width: 280px;
+    --tail-min: 220px;
+    --tail-max: 520px;
   }
   body { max-width: 980px; margin: 0 auto; padding: 1rem 1.25rem 3rem; line-height: 1.5; }
   header.site {
@@ -182,12 +185,32 @@ const styles = `
     z-index: 100;
   }
   body.tail-open .live-tail { transform: none; }
-  @media (min-width: 1420px) {
+
+  .tail-resize { display: none; }
+
+  @media (min-width: 1000px) {
+    body {
+      max-width: none;
+      margin: 0;
+      padding-left: calc(var(--tail-width) + 20px);
+      padding-right: 20px;
+    }
+    header.site, main { max-width: 980px; margin-left: auto; margin-right: auto; }
     .live-tail {
-      width: clamp(220px, calc((100vw - 980px) / 2 - 16px), 400px);
+      width: var(--tail-width);
       transform: none;
       transition: none;
       background: transparent;
+      z-index: 10;
+    }
+    .tail-resize {
+      display: block;
+      position: absolute; top: 0; right: -3px; bottom: 0;
+      width: 6px; cursor: col-resize;
+      z-index: 20;
+    }
+    .tail-resize:hover, .tail-resize.dragging {
+      background: color-mix(in oklab, var(--accent) 55%, transparent);
     }
   }
   .tail-backdrop {
@@ -198,7 +221,7 @@ const styles = `
     z-index: 99;
   }
   body.tail-open .tail-backdrop { opacity: 1; pointer-events: auto; }
-  @media (min-width: 1420px) { .tail-backdrop { display: none; } }
+  @media (min-width: 1000px) { .tail-backdrop { display: none; } }
 
   .tail-toggle {
     position: relative;
@@ -212,7 +235,7 @@ const styles = `
     font-variant-numeric: tabular-nums;
   }
   .tail-toggle .badge:empty { display: none; }
-  @media (min-width: 1420px) { .tail-toggle { display: none; } }
+  @media (min-width: 1000px) { .tail-toggle { display: none; } }
   .live-tail h3 {
     margin: 0 0 .5rem; font-size: .72rem; color: var(--dim);
     text-transform: uppercase; letter-spacing: .08em; font-weight: 600;
@@ -462,6 +485,7 @@ export function Layout(props: {
             <span class="unread-count" aria-live="polite"></span>
           </h3>
           <ol></ol>
+          <div class="tail-resize" role="separator" aria-orientation="vertical" aria-label="Resize live tail" tabindex={0}></div>
         </aside>
         <script>{raw(postRefScript)}</script>
         <script>{raw(liveTailScript)}</script>
@@ -592,6 +616,88 @@ const liveTailScript = `
       refreshCount();
     }
   });
+
+  // Partial-swap navigation for tail link clicks so the sidebar never rerenders.
+  var swapSeq = 0;
+  tail.addEventListener('click', function (event) {
+    if (event.defaultPrevented || event.button !== 0) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    var a = event.target.closest && event.target.closest('a[href]');
+    if (!a) return;
+    if (a.target && a.target !== '_self') return;
+    var url;
+    try { url = new URL(a.href, location.href); } catch (err) { return; }
+    if (url.origin !== location.origin) return;
+    event.preventDefault();
+    partialSwap(url.href, true);
+  });
+  window.addEventListener('popstate', function () { partialSwap(location.href, false); });
+
+  function partialSwap(href, push) {
+    var mine = ++swapSeq;
+    fetch(href, { headers: { 'Accept': 'text/html' }, credentials: 'same-origin', redirect: 'follow' })
+      .then(function (res) { return res.text().then(function (html) { return { html: html, url: res.url || href }; }); })
+      .then(function (result) {
+        if (mine !== swapSeq) return;
+        var doc = new DOMParser().parseFromString(result.html, 'text/html');
+        var newMain = doc.querySelector('main');
+        var main = document.querySelector('main');
+        if (!newMain || !main) { window.location.href = href; return; }
+        main.replaceWith(newMain);
+        if (doc.title) document.title = doc.title;
+        if (push) history.pushState({ swap: true }, '', result.url);
+        var hash = '';
+        try { hash = new URL(result.url, location.href).hash; } catch (err) {}
+        if (hash) {
+          var target = document.querySelector(hash);
+          if (target) target.scrollIntoView();
+        } else {
+          window.scrollTo(0, 0);
+        }
+      })
+      .catch(function () { window.location.href = href; });
+  }
+
+  // Resize handle
+  var handle = tail && tail.querySelector('.tail-resize');
+  if (handle) {
+    var TAIL_KEY = 'swarmbook_tail_width';
+    var MIN_W = 220, MAX_W = 520;
+    try {
+      var saved = localStorage.getItem(TAIL_KEY);
+      var savedNum = saved ? Number(saved) : NaN;
+      if (Number.isFinite(savedNum) && savedNum >= MIN_W && savedNum <= MAX_W) {
+        document.documentElement.style.setProperty('--tail-width', savedNum + 'px');
+      }
+    } catch (err) {}
+    var dragging = false;
+    function onMove(event) {
+      if (!dragging) return;
+      var w = Math.max(MIN_W, Math.min(MAX_W, event.clientX));
+      document.documentElement.style.setProperty('--tail-width', w + 'px');
+    }
+    function onUp() {
+      if (!dragging) return;
+      dragging = false;
+      handle.classList.remove('dragging');
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      var w = getComputedStyle(document.documentElement).getPropertyValue('--tail-width').trim();
+      var num = parseInt(w, 10);
+      if (Number.isFinite(num)) {
+        try { localStorage.setItem(TAIL_KEY, String(num)); } catch (err) {}
+      }
+    }
+    handle.addEventListener('mousedown', function (event) {
+      event.preventDefault();
+      dragging = true;
+      handle.classList.add('dragging');
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'col-resize';
+    });
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }
 
   var backfilling = true;
   var es = new EventSource('/stream');
