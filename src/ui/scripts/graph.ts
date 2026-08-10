@@ -42,11 +42,6 @@ export const graphScript = `
     };
   }
 
-  function seeded(id, salt) {
-    var value = Math.imul(id + salt, 2654435761) >>> 0;
-    return value / 4294967295;
-  }
-
   var FAMILY_HUES = [210, 18, 145, 278, 42, 330, 184, 96, 255, 5, 165, 60];
 
   function familyColour(hue, kind) {
@@ -113,17 +108,10 @@ export const graphScript = `
   function graphData(payload) {
     var nodes = [];
     var boardFamilies = {};
-    var boardCount = Math.max(1, payload.boards.length);
-    var ringRadius = Math.max(180, boardCount * 58);
 
     payload.boards.forEach(function (board, index) {
-      var angle = (Math.PI * 2 * index / boardCount) - Math.PI / 2;
-      var position = {
-        x: Math.cos(angle) * ringRadius,
-        y: Math.sin(angle) * ringRadius
-      };
       var hue = FAMILY_HUES[index % FAMILY_HUES.length];
-      boardFamilies[board.name] = { position: position, hue: hue };
+      boardFamilies[board.name] = { hue: hue };
       nodes.push({
         id: 'board:' + board.id,
         kind: 'board',
@@ -131,24 +119,13 @@ export const graphScript = `
         description: board.description,
         postCount: board.post_count,
         familyHue: hue,
-        x: position.x,
-        y: position.y,
         url: '/boards/' + encodeURIComponent(board.name)
       });
     });
 
-    var threadPositions = {};
     payload.posts.forEach(function (post) {
       if (post.kind !== 'thread') return;
-      var family = boardFamilies[post.board] || { position: { x: 0, y: 0 }, hue: 210 };
-      var center = family.position;
-      var angle = seeded(post.id, 11) * Math.PI * 2;
-      var radius = 55 + seeded(post.id, 29) * 95;
-      var position = {
-        x: center.x + Math.cos(angle) * radius,
-        y: center.y + Math.sin(angle) * radius
-      };
-      threadPositions[post.thread_id] = position;
+      var family = boardFamilies[post.board] || { hue: 210 };
       nodes.push({
         id: 'post:' + post.id,
         postId: post.id,
@@ -156,18 +133,13 @@ export const graphScript = `
         kind: post.kind,
         board: post.board,
         familyHue: family.hue,
-        x: position.x,
-        y: position.y,
         url: '/boards/' + encodeURIComponent(post.board) + '/threads/' + post.thread_id + '#post-' + post.id
       });
     });
 
     payload.posts.forEach(function (post) {
       if (post.kind === 'thread') return;
-      var family = boardFamilies[post.board] || { position: { x: 0, y: 0 }, hue: 210 };
-      var center = threadPositions[post.thread_id] || family.position;
-      var angle = seeded(post.id, 47) * Math.PI * 2;
-      var radius = 18 + seeded(post.id, 71) * 38;
+      var family = boardFamilies[post.board] || { hue: 210 };
       nodes.push({
         id: 'post:' + post.id,
         postId: post.id,
@@ -175,8 +147,6 @@ export const graphScript = `
         kind: post.kind,
         board: post.board,
         familyHue: family.hue,
-        x: center.x + Math.cos(angle) * radius,
-        y: center.y + Math.sin(angle) * radius,
         url: '/boards/' + encodeURIComponent(post.board) + '/threads/' + post.thread_id + '#post-' + post.id
       });
     });
@@ -216,7 +186,7 @@ export const graphScript = `
   }
 
   function randomisePositions(data) {
-    var spread = Math.max(260, Math.sqrt(data.nodes.length) * 28);
+    var spread = Math.max(190, Math.min(420, Math.sqrt(data.nodes.length) * 12));
     data.nodes.forEach(function (node) {
       var angle = Math.random() * Math.PI * 2;
       var radius = Math.sqrt(Math.random()) * spread;
@@ -238,6 +208,7 @@ export const graphScript = `
     var reset = shell.querySelector('[data-graph-reset]');
     var palette = colours();
     var data = graphData(payload);
+    randomisePositions(data);
     var cameraTick = 0;
 
     function nodeColour(node) {
@@ -307,7 +278,7 @@ export const graphScript = `
 
     var charge = graph.d3Force('charge');
     if (charge && charge.strength) {
-      charge.strength(1.8).distanceMin(72).distanceMax(320);
+      charge.strength(1.8).distanceMin(72).distanceMax(720);
     }
     var linkForce = graph.d3Force('link');
     if (linkForce && linkForce.distance) {

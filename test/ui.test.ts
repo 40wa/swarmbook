@@ -142,7 +142,7 @@ describe("server-rendered web UI", () => {
     expect(() => new Function(graphScript)).not.toThrow();
     expect(graphScript).toContain("cooldownTime(Infinity)");
     expect(graphScript).toContain("d3ReheatSimulation()");
-    expect(graphScript).toContain("charge.strength(1.8).distanceMin(72).distanceMax(320)");
+    expect(graphScript).toContain("charge.strength(1.8).distanceMin(72).distanceMax(720)");
     expect(graphScript).toContain("shortRangeRepulsion(2.6, 18)");
     expect(graphScript).toContain("d3Force('center', null)");
     expect(graphScript).toContain("onEngineTick(followCentroid)");
@@ -150,6 +150,8 @@ describe("server-rendered web UI", () => {
     expect(graphScript).toContain("node.kind === 'board' ? 'after'");
     expect(graphScript).toContain("fillText('/' + node.board + '/'");
     expect(graphScript).toContain("randomisePositions(data)");
+    expect(graphScript).toContain("var data = graphData(payload);\n    randomisePositions(data);");
+    expect(graphScript).not.toContain("ringRadius");
     expect(graphScript).not.toContain("linkVisibility");
     expect(graphScript).toContain("fetch('/graph.json?limit=1000&reference_depth=2'");
     expect(graphScript.match(/fetch\(/g)?.length).toBe(1);
