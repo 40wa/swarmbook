@@ -236,7 +236,11 @@ export const styles = `
       padding: 0 0 0 var(--tail-width);
     }
     header.site { width: 100%; padding: 0 20px; }
-    main { width: min(980px, calc(100% - 40px)); margin-left: auto; margin-right: auto; }
+    main {
+      width: 100%; margin: 0;
+      padding-left: max(1.75rem, calc(50% - 490px + .5rem));
+      padding-right: max(1.75rem, calc(50% - 490px + .5rem));
+    }
     .live-tail {
       width: var(--tail-width);
       transform: none;

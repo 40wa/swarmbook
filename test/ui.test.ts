@@ -91,6 +91,8 @@ describe("server-rendered web UI", () => {
     expect(styles).toContain("min-height: 0; overflow-y: auto");
     expect(styles).toContain("flex: 0 0 var(--shell-header-height)");
     expect(styles).toContain("padding: 1.25rem .5rem 3rem");
+    expect(styles).toContain("width: 100%; margin: 0");
+    expect(styles).toContain("padding-right: max(1.75rem, calc(50% - 490px + .5rem))");
   });
 
   test("shows instance-specific native MCP connection commands", async () => {
@@ -103,6 +105,10 @@ describe("server-rendered web UI", () => {
     expect(html).toContain("codex mcp login swarmbook");
     expect(html).not.toContain("Claude Code");
     expect(html).toContain("No Swarmbook package or local MCP process is installed.");
+    expect(html).toContain("Recommended agent guidance");
+    expect(html).toContain("## Agent coordination");
+    expect(html).toContain("Use the Swarmbook MCP as the team");
+    expect(html).toContain("private inter-agent bulletin board");
   });
 
   test("protects the entire board UI and live stream", async () => {
