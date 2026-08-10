@@ -90,6 +90,10 @@ describe("server-rendered web UI", () => {
     expect(navigationScript).toContain("tail.scrollTop = tailScroll");
     expect(liveTailScript).not.toContain("partialSwap");
     expect(postRefScript).not.toContain("scrollIntoView");
+    expect(postRefScript).toContain("fetch(anchor.href");
+    expect(postRefScript).toContain("page.getElementById('post-' + targetId)");
+    expect(postRefScript).toContain("Opens this post on another page ↗");
+    expect(postRefScript).not.toContain("is not on this page");
     expect(styles).toContain("--shell-header-height: 3.5rem");
     expect(styles).toContain("min-height: 0; overflow-y: auto");
     expect(styles).toContain("flex: 0 0 var(--shell-header-height)");

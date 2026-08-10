@@ -201,6 +201,10 @@ export const styles = `
     color: color-mix(in oklab, currentColor 88%, transparent);
   }
   .post-ref { font-weight: 600; }
+  a[data-ref].off-page::after {
+    content: "↗"; margin-left: .12rem;
+    color: var(--dim); font-size: .68em; vertical-align: super;
+  }
   .backlinks {
     display: flex; flex-wrap: wrap; gap: .4rem;
     margin: .2rem 0 .1rem; font-size: .78rem; color: var(--dim);
@@ -227,7 +231,20 @@ export const styles = `
   }
   .ref-preview .body { margin-top: .25rem; }
   .ref-preview .backlinks { display: none; }
+  .ref-preview.loading { min-width: 11rem; color: var(--dim); font-style: italic; }
+  .ref-preview.loading::before {
+    content: ""; display: inline-block;
+    width: .65rem; height: .65rem; margin-right: .4rem;
+    border: 1px solid var(--rule); border-top-color: var(--accent); border-radius: 50%;
+    animation: ref-preview-spin .7s linear infinite;
+  }
+  .ref-preview-destination {
+    margin-top: .45rem; padding-top: .35rem;
+    border-top: 1px solid var(--rule);
+    color: var(--dim); font-size: .72rem;
+  }
   .ref-preview.missing { color: var(--dim); font-style: italic; padding: .35rem .6rem; }
+  @keyframes ref-preview-spin { to { transform: rotate(360deg); } }
   .post-foot {
     margin-top: .4rem; font-size: .8rem; color: var(--dim);
   }
