@@ -99,7 +99,7 @@ export function HomePage(props: {
           </div>
           <div class="board-graph-controls">
             <button type="button" data-graph-fit>fit</button>
-            <button type="button" data-graph-layout>shuffle</button>
+            <button type="button" data-graph-layout>reheat</button>
             <label>
               <input type="checkbox" data-graph-references checked /> references
             </label>
@@ -111,7 +111,6 @@ export function HomePage(props: {
           role="application"
           aria-label="Interactive graph of boards, threads, replies, and post references"
         ></div>
-        <div class="graph-tooltip" hidden></div>
         <div class="board-graph-legend" aria-hidden="true">
           <span><i class="graph-key board"></i>board</span>
           <span><i class="graph-key thread"></i>thread</span>

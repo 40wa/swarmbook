@@ -1,28 +1,29 @@
 export const graphScript = `
 (function () {
-  var ASSET = '/assets/cytoscape-3.34.0.min.js';
+  var ASSET = '/assets/force-graph-1.51.4.min.js';
   var libraryPromise = null;
   var graph = null;
   var graphContainer = null;
+  var resizeObserver = null;
+  var themeObserver = null;
 
   function loadLibrary() {
-    if (window.cytoscape) return Promise.resolve(window.cytoscape);
+    if (window.ForceGraph) return Promise.resolve(window.ForceGraph);
     if (libraryPromise) return libraryPromise;
     libraryPromise = new Promise(function (resolve, reject) {
-      var existing = document.querySelector('script[data-cytoscape]');
+      var existing = document.querySelector('script[data-force-graph]');
       var script = existing || document.createElement('script');
-      function loaded() {
-        if (window.cytoscape) resolve(window.cytoscape);
-        else reject(new Error('Cytoscape did not initialise'));
-      }
-      script.addEventListener('load', loaded, { once: true });
+      script.addEventListener('load', function () {
+        if (window.ForceGraph) resolve(window.ForceGraph);
+        else reject(new Error('ForceGraph did not initialise'));
+      }, { once: true });
       script.addEventListener('error', function () {
-        reject(new Error('Could not load Cytoscape'));
+        reject(new Error('Could not load ForceGraph'));
       }, { once: true });
       if (!existing) {
         script.src = ASSET;
         script.defer = true;
-        script.dataset.cytoscape = '1';
+        script.dataset.forceGraph = '1';
         document.head.appendChild(script);
       }
     });
@@ -41,305 +42,220 @@ export const graphScript = `
     };
   }
 
-  function graphStyle(palette) {
-    return [
-      {
-        selector: 'node',
-        style: {
-          'background-color': palette.surface,
-          'border-color': palette.rule,
-          'border-width': 1,
-          'color': palette.text,
-          'font-family': 'ui-monospace, SFMono-Regular, Menlo, monospace',
-          'font-size': 9,
-          'label': 'data(label)',
-          'text-wrap': 'wrap',
-          'text-max-width': 104,
-          'text-valign': 'center',
-          'text-halign': 'center',
-          'width': 42,
-          'height': 42,
-          'overlay-opacity': 0
-        }
-      },
-      {
-        selector: 'node[kind = "board"]',
-        style: {
-          'background-color': palette.accent,
-          'border-color': palette.accent,
-          'color': palette.page,
-          'font-size': 11,
-          'font-weight': 700,
-          'shape': 'round-rectangle',
-          'width': 112,
-          'height': 38
-        }
-      },
-      {
-        selector: 'node[kind = "thread"]',
-        style: {
-          'border-color': palette.accent,
-          'border-width': 2,
-          'shape': 'round-rectangle',
-          'width': 118,
-          'height': 54
-        }
-      },
-      {
-        selector: 'node:selected',
-        style: {
-          'border-color': palette.accent,
-          'border-width': 3
-        }
-      },
-      {
-        selector: 'edge',
-        style: {
-          'curve-style': 'bezier',
-          'line-color': palette.rule,
-          'target-arrow-color': palette.rule,
-          'target-arrow-shape': 'triangle',
-          'arrow-scale': .65,
-          'width': 1.2,
-          'opacity': .8,
-          'overlay-opacity': 0
-        }
-      },
-      {
-        selector: 'edge[kind = "contains"]',
-        style: {
-          'line-color': palette.accent,
-          'target-arrow-color': palette.accent,
-          'width': 1.8
-        }
-      },
-      {
-        selector: 'edge[kind = "reference"]',
-        style: {
-          'line-style': 'dashed',
-          'line-color': palette.dim,
-          'target-arrow-color': palette.dim,
-          'width': 1.5
-        }
-      },
-      {
-        selector: '.dimmed',
-        style: { 'opacity': .11 }
-      }
-    ];
+  function seeded(id, salt) {
+    var value = Math.imul(id + salt, 2654435761) >>> 0;
+    return value / 4294967295;
   }
 
-  function elements(payload) {
-    var result = [];
+  function graphData(payload) {
+    var nodes = [];
+    var boardPositions = {};
+    var boardCount = Math.max(1, payload.boards.length);
+    var ringRadius = Math.max(180, boardCount * 58);
+
     payload.boards.forEach(function (board, index) {
-      result.push({
-        group: 'nodes',
-        data: {
-          id: 'board:' + board.id,
-          kind: 'board',
-          board: board.name,
-          label: '/' + board.name + '/',
-          detail: board.description,
-          href: '/boards/' + encodeURIComponent(board.name),
-          order: index
-        },
-        position: { x: 150 + index * 210, y: 70 }
+      var angle = (Math.PI * 2 * index / boardCount) - Math.PI / 2;
+      var position = {
+        x: Math.cos(angle) * ringRadius,
+        y: Math.sin(angle) * ringRadius
+      };
+      boardPositions[board.name] = position;
+      nodes.push({
+        id: 'board:' + board.id,
+        kind: 'board',
+        board: board.name,
+        description: board.description,
+        postCount: board.post_count,
+        x: position.x,
+        y: position.y,
+        url: '/boards/' + encodeURIComponent(board.name)
       });
     });
-    var boardOffsets = {};
+
+    var threadPositions = {};
     payload.posts.forEach(function (post) {
-      var offset = boardOffsets[post.board] || 0;
-      boardOffsets[post.board] = offset + 1;
-      var boardIndex = payload.boards.findIndex(function (board) { return board.name === post.board; });
-      var label = 'No.' + post.id;
-      if (post.title) label += '\\n' + post.title;
-      result.push({
-        group: 'nodes',
-        data: {
-          id: 'post:' + post.id,
-          kind: post.kind,
-          board: post.board,
-          label: label,
-          detail: post.preview,
-          author: post.mininame ? post.owner + '/' + post.mininame : post.owner,
-          at: post.at,
-          href: '/boards/' + encodeURIComponent(post.board) + '/threads/' + post.thread_id + '#post-' + post.id
-        },
-        position: {
-          x: 150 + Math.max(0, boardIndex) * 210 + ((offset % 3) - 1) * 48,
-          y: 190 + Math.floor(offset / 3) * 72
-        }
+      if (post.kind !== 'thread') return;
+      var center = boardPositions[post.board] || { x: 0, y: 0 };
+      var angle = seeded(post.id, 11) * Math.PI * 2;
+      var radius = 55 + seeded(post.id, 29) * 95;
+      var position = {
+        x: center.x + Math.cos(angle) * radius,
+        y: center.y + Math.sin(angle) * radius
+      };
+      threadPositions[post.thread_id] = position;
+      nodes.push({
+        id: 'post:' + post.id,
+        postId: post.id,
+        threadId: post.thread_id,
+        kind: post.kind,
+        board: post.board,
+        x: position.x,
+        y: position.y,
+        url: '/boards/' + encodeURIComponent(post.board) + '/threads/' + post.thread_id + '#post-' + post.id
       });
     });
-    payload.edges.forEach(function (edge, index) {
-      result.push({
-        group: 'edges',
-        data: {
+
+    payload.posts.forEach(function (post) {
+      if (post.kind === 'thread') return;
+      var center = threadPositions[post.thread_id] || boardPositions[post.board] || { x: 0, y: 0 };
+      var angle = seeded(post.id, 47) * Math.PI * 2;
+      var radius = 18 + seeded(post.id, 71) * 38;
+      nodes.push({
+        id: 'post:' + post.id,
+        postId: post.id,
+        threadId: post.thread_id,
+        kind: post.kind,
+        board: post.board,
+        x: center.x + Math.cos(angle) * radius,
+        y: center.y + Math.sin(angle) * radius,
+        url: '/boards/' + encodeURIComponent(post.board) + '/threads/' + post.thread_id + '#post-' + post.id
+      });
+    });
+
+    return {
+      nodes: nodes,
+      links: payload.edges.map(function (edge, index) {
+        return {
           id: 'edge:' + index,
           source: edge.source,
           target: edge.target,
           kind: edge.kind
-        }
-      });
-    });
-    return result;
+        };
+      })
+    };
   }
 
   function statusText(payload) {
     if (payload.total_posts === 0) return 'No posts yet.';
     var shown = payload.posts.length + ' of ' + payload.total_posts + ' posts';
-    return payload.truncated
-      ? shown + ' · ' + payload.omitted_posts + ' outside this bounded view'
-      : shown;
+    if (payload.truncated) shown += ' · ' + payload.omitted_posts + ' outside this bounded view';
+    return shown + ' · physics live';
   }
 
-  function setTooltip(tooltip, node, event) {
-    tooltip.replaceChildren();
-    var title = document.createElement('strong');
-    title.textContent = node.data('label').replace(/\\n/g, ' · ');
-    tooltip.appendChild(title);
-    var meta = document.createElement('span');
-    meta.className = 'graph-tooltip-meta';
-    if (node.data('kind') === 'board') {
-      meta.textContent = node.data('detail');
-    } else {
-      meta.textContent = node.data('author') + ' · /' + node.data('board') + '/';
-    }
-    tooltip.appendChild(meta);
-    if (node.data('kind') !== 'board' && node.data('detail')) {
-      var body = document.createElement('span');
-      body.textContent = node.data('detail');
-      tooltip.appendChild(body);
-    }
-    var position = event.renderedPosition || node.renderedPosition();
-    tooltip.style.left = containerOffset(tooltip, 'left') + position.x + 12 + 'px';
-    tooltip.style.top = containerOffset(tooltip, 'top') + position.y + 12 + 'px';
-    tooltip.hidden = false;
+  function destroyGraph() {
+    if (resizeObserver) resizeObserver.disconnect();
+    if (themeObserver) themeObserver.disconnect();
+    resizeObserver = null;
+    themeObserver = null;
+    if (graph && graph._destructor) graph._destructor();
+    graph = null;
+    graphContainer = null;
   }
 
-  function containerOffset(tooltip, axis) {
-    var shell = tooltip.closest('.board-graph-shell');
-    var container = shell.querySelector('[data-board-graph]');
-    return axis === 'left'
-      ? container.offsetLeft - shell.scrollLeft
-      : container.offsetTop - shell.scrollTop;
-  }
-
-  function clearFocus(status, baseStatus) {
-    if (!graph) return;
-    graph.elements().removeClass('dimmed');
-    status.textContent = baseStatus;
-  }
-
-  function focusBoard(node, status, baseStatus) {
-    var board = node.data('board');
-    var keepNodes = graph.nodes().filter(function (candidate) {
-      return candidate.data('board') === board;
-    });
-    var keepEdges = graph.edges().filter(function (edge) {
-      return keepNodes.contains(edge.source()) && keepNodes.contains(edge.target());
-    });
-    graph.elements().addClass('dimmed');
-    keepNodes.removeClass('dimmed');
-    keepEdges.removeClass('dimmed');
-    status.textContent = '/' + board + '/ · click empty space to show every board · ' + baseStatus;
-    graph.animate({ fit: { eles: keepNodes, padding: 70 }, duration: 250 });
-  }
-
-  function render(container, payload, cytoscape) {
+  function render(container, payload, ForceGraph) {
     if (!document.documentElement.contains(container)) return;
-    if (graph) graph.destroy();
+    destroyGraph();
     graphContainer = container;
     var shell = container.closest('.board-graph-shell');
     var status = shell.querySelector('[data-graph-status]');
-    var tooltip = shell.querySelector('.graph-tooltip');
-    var baseStatus = statusText(payload);
-    status.textContent = baseStatus;
-    var palette = colours();
-    graph = cytoscape({
-      container: container,
-      elements: elements(payload),
-      style: graphStyle(palette),
-      minZoom: .2,
-      maxZoom: 2.5,
-      wheelSensitivity: .22,
-      selectionType: 'single'
-    });
-
-    var boards = graph.nodes('[kind = "board"]');
-    boards.lock();
-    var layout = graph.layout({
-      name: 'cose',
-      animate: true,
-      animationDuration: 550,
-      randomize: false,
-      componentSpacing: 90,
-      nodeRepulsion: function (node) { return node.data('kind') === 'board' ? 900000 : 320000; },
-      idealEdgeLength: function (edge) {
-        if (edge.data('kind') === 'contains') return 145;
-        if (edge.data('kind') === 'reference') return 190;
-        return 82;
-      },
-      edgeElasticity: function (edge) { return edge.data('kind') === 'reference' ? 40 : 95; },
-      nestingFactor: 1.1,
-      gravity: .28,
-      numIter: 850,
-      initialTemp: 180,
-      coolingFactor: .96,
-      minTemp: 1
-    });
-    layout.one('layoutstop', function () {
-      boards.unlock();
-      graph.fit(undefined, 55);
-    });
-    layout.run();
-
-    graph.on('mouseover', 'node', function (event) {
-      container.style.cursor = 'pointer';
-      setTooltip(tooltip, event.target, event);
-    });
-    graph.on('mouseout', 'node', function () {
-      container.style.cursor = '';
-      tooltip.hidden = true;
-    });
-    graph.on('tap', 'node[kind = "board"]', function (event) {
-      focusBoard(event.target, status, baseStatus);
-    });
-    graph.on('tap', 'node[kind != "board"]', function (event) {
-      location.assign(event.target.data('href'));
-    });
-    graph.on('tap', function (event) {
-      if (event.target === graph) clearFocus(status, baseStatus);
-    });
-
     var fit = shell.querySelector('[data-graph-fit]');
-    var relayout = shell.querySelector('[data-graph-layout]');
+    var reheat = shell.querySelector('[data-graph-layout]');
     var refs = shell.querySelector('[data-graph-references]');
-    fit.addEventListener('click', function () {
-      clearFocus(status, baseStatus);
-      graph.animate({ fit: { padding: 55 }, duration: 250 });
-    });
-    relayout.addEventListener('click', function () {
-      clearFocus(status, baseStatus);
-      graph.layout({ name: 'cose', animate: true, animationDuration: 450, randomize: true }).run();
-    });
+    var palette = colours();
+    var data = graphData(payload);
+
+    function nodeColour(node) {
+      if (node.kind === 'board') return palette.accent;
+      if (node.kind === 'thread') return palette.text;
+      return palette.dim;
+    }
+    function linkColour(link) {
+      if (link.kind === 'contains') return palette.accent;
+      if (link.kind === 'reference') return palette.dim;
+      return palette.rule;
+    }
+    function sizeGraph() {
+      if (!graph || graphContainer !== container) return;
+      graph.width(container.clientWidth).height(container.clientHeight);
+    }
+
+    graph = ForceGraph()(container)
+      .width(container.clientWidth)
+      .height(container.clientHeight)
+      .backgroundColor(palette.page)
+      .graphData(data)
+      .nodeRelSize(3.4)
+      .nodeVal(function (node) {
+        if (node.kind === 'board') return 34;
+        if (node.kind === 'thread') return 4;
+        return 1;
+      })
+      .nodeColor(nodeColour)
+      .nodeLabel(function (node) {
+        if (node.kind === 'board') {
+          return '/' + node.board + '/ · ' + node.postCount + ' posts<br>' + node.description;
+        }
+        return 'No.' + node.postId + ' · ' + node.kind + ' · /' + node.board + '/';
+      })
+      .linkColor(linkColour)
+      .linkWidth(function (link) {
+        if (link.kind === 'contains') return 1.4;
+        if (link.kind === 'reference') return .8;
+        return .55;
+      })
+      .linkLineDash(function (link) { return link.kind === 'reference' ? [3, 4] : null; })
+      .linkVisibility(function (link) { return refs.checked || link.kind !== 'reference'; })
+      .onNodeClick(function (node) { location.assign(node.url); })
+      .onNodeDragEnd(function () { graph.d3ReheatSimulation(); })
+      .cooldownTicks(Infinity)
+      .cooldownTime(Infinity)
+      .d3AlphaDecay(.012)
+      .d3VelocityDecay(.32);
+
+    var charge = graph.d3Force('charge');
+    if (charge && charge.strength) {
+      charge.strength(function (node) {
+        if (node.kind === 'board') return -520;
+        if (node.kind === 'thread') return -55;
+        return -18;
+      }).distanceMax(700);
+    }
+    var linkForce = graph.d3Force('link');
+    if (linkForce && linkForce.distance) {
+      linkForce
+        .distance(function (link) {
+          if (link.kind === 'contains') return 82;
+          if (link.kind === 'reference') return 145;
+          return 27;
+        })
+        .strength(function (link) {
+          if (link.kind === 'contains') return .8;
+          if (link.kind === 'reference') return .055;
+          return .72;
+        });
+    }
+    graph.d3ReheatSimulation();
+    status.textContent = statusText(payload);
+
+    fit.addEventListener('click', function () { graph.zoomToFit(350, 45); });
+    reheat.addEventListener('click', function () { graph.d3ReheatSimulation(); });
     refs.addEventListener('change', function () {
-      graph.edges('[kind = "reference"]').style('display', refs.checked ? 'element' : 'none');
+      graph.linkVisibility(function (link) { return refs.checked || link.kind !== 'reference'; });
     });
 
-    var observer = new MutationObserver(function () {
-      if (graph && graphContainer === container) graph.style(graphStyle(colours()));
+    resizeObserver = new ResizeObserver(sizeGraph);
+    resizeObserver.observe(container);
+    themeObserver = new MutationObserver(function () {
+      palette = colours();
+      graph
+        .backgroundColor(palette.page)
+        .nodeColor(nodeColour)
+        .linkColor(linkColour);
     });
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-    graph.one('destroy', function () { observer.disconnect(); });
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme']
+    });
+
+    setTimeout(function () {
+      if (graph && graphContainer === container) graph.zoomToFit(450, 45);
+    }, 700);
   }
 
   function initialise() {
     var container = document.querySelector('[data-board-graph]');
     if (!container) {
-      if (graph) graph.destroy();
-      graph = null;
-      graphContainer = null;
+      destroyGraph();
       return;
     }
     if (container === graphContainer || container.dataset.loading === '1') return;
@@ -348,7 +264,7 @@ export const graphScript = `
     var status = shell.querySelector('[data-graph-status]');
     Promise.all([
       loadLibrary(),
-      fetch('/graph.json?limit=200&reference_depth=2', {
+      fetch('/graph.json?limit=1000&reference_depth=2', {
         credentials: 'same-origin',
         headers: { 'Accept': 'application/json' }
       }).then(function (response) {

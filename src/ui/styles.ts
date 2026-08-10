@@ -180,20 +180,6 @@ export const styles = `
       color-mix(in oklab, var(--rule) 30%, transparent) 20px
     );
   }
-  .graph-tooltip {
-    position: absolute; z-index: 30;
-    display: grid; gap: .18rem;
-    width: min(19rem, calc(100vw - 3rem));
-    padding: .45rem .55rem;
-    border: 1px solid var(--accent); border-radius: .3rem;
-    background: var(--surface-elevated); color: var(--page-fg);
-    box-shadow: 0 8px 22px rgba(0,0,0,.28);
-    font-size: .72rem; line-height: 1.35;
-    pointer-events: none;
-  }
-  .graph-tooltip[hidden] { display: none; }
-  .graph-tooltip strong { color: var(--accent); }
-  .graph-tooltip-meta { color: var(--dim); }
   .board-graph-legend {
     display: flex; flex-wrap: wrap; gap: .75rem;
     margin-top: .45rem; color: var(--dim); font-size: .7rem;

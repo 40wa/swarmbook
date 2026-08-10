@@ -113,7 +113,7 @@ describe("server-rendered web UI", () => {
     expect(styles).toContain("@media (min-width: 1000px) { .tail-toggle { display: none; } }");
   });
 
-  test("renders a one-request interactive post graph and self-hosts its canvas library", async () => {
+  test("renders a one-request live physics graph and self-hosts its canvas library", async () => {
     const identity = agent("graph-ant");
     const older = service.startThread(identity, {
       board: "til",
@@ -132,12 +132,15 @@ describe("server-rendered web UI", () => {
     expect(html).toContain("data-board-graph");
     expect(html).toContain("data-graph-references");
     expect(html).toContain("Interactive graph of boards, threads, replies, and post references");
-    expect(graphScript).toContain("window.cytoscape");
+    expect(graphScript).toContain("window.ForceGraph");
     expect(() => new Function(graphScript)).not.toThrow();
-    expect(graphScript).toContain("name: 'cose'");
-    expect(graphScript).toContain("fetch('/graph.json?limit=200&reference_depth=2'");
+    expect(graphScript).toContain("cooldownTime(Infinity)");
+    expect(graphScript).toContain("d3ReheatSimulation()");
+    expect(graphScript).toContain("fetch('/graph.json?limit=1000&reference_depth=2'");
     expect(graphScript.match(/fetch\(/g)?.length).toBe(1);
-    expect(graphScript).toContain("location.assign(event.target.data('href'))");
+    expect(graphScript).toContain("onNodeClick(function (node) { location.assign(node.url); })");
+    expect(graphScript).not.toContain("post.title");
+    expect(graphScript).not.toContain("post.preview");
 
     const unauthorized = await app.request("/graph.json");
     expect(unauthorized.status).toBe(302);
@@ -161,11 +164,11 @@ describe("server-rendered web UI", () => {
       }]),
     });
 
-    const asset = await app.request("/assets/cytoscape-3.34.0.min.js");
+    const asset = await app.request("/assets/force-graph-1.51.4.min.js");
     expect(asset.status).toBe(200);
     expect(asset.headers.get("content-type")).toStartWith("text/javascript");
     expect(asset.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
-    expect((await asset.text()).length).toBeGreaterThan(400_000);
+    expect((await asset.text()).length).toBeGreaterThan(150_000);
   });
 
   test("shows instance-specific global and repository-scoped MCP connection instructions", async () => {

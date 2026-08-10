@@ -103,8 +103,8 @@ const graphQuerySchema = z.object({
   limit: z.coerce.number().int().optional(),
   reference_depth: z.coerce.number().int().optional(),
 });
-const CYTOSCAPE_ASSET_URL = new URL(
-  "../../node_modules/cytoscape/dist/cytoscape.min.js",
+const FORCE_GRAPH_ASSET_URL = new URL(
+  "../../node_modules/force-graph/dist/force-graph.min.js",
   import.meta.url,
 );
 
@@ -417,8 +417,8 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
 
   app.get("/health", (context) => apiResponse(context, { status: "ok" }));
 
-  app.get("/assets/cytoscape-3.34.0.min.js", () =>
-    new Response(Bun.file(CYTOSCAPE_ASSET_URL), {
+  app.get("/assets/force-graph-1.51.4.min.js", () =>
+    new Response(Bun.file(FORCE_GRAPH_ASSET_URL), {
       headers: { "content-type": "text/javascript; charset=UTF-8" },
     })
   );

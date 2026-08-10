@@ -373,7 +373,7 @@ describe("boards and threads", () => {
     });
     expect(graph.boards.map((board) => board.name)).toContain("questions");
 
-    await expectError(() => service.graph({ limit: 301 }), "invalid_limit");
+    await expectError(() => service.graph({ limit: 1001 }), "invalid_limit");
     await expectError(
       () => service.graph({ referenceDepth: 4 }),
       "invalid_reference_depth",

@@ -100,11 +100,6 @@ export interface GraphView {
     id: number;
     thread_id: number;
     board: string;
-    owner: string;
-    mininame: string | null;
-    title: string | null;
-    preview: string;
-    at: string;
     kind: "thread" | "reply";
   }>;
   edges: Array<{
@@ -294,9 +289,9 @@ function normalizeSearchLimit(value: number | undefined): number {
 }
 
 function normalizeGraphLimit(value: number | undefined): number {
-  if (value === undefined) return 200;
-  if (!Number.isSafeInteger(value) || value < 1 || value > 300) {
-    throw appError("invalid_limit", "graph limit must be an integer between 1 and 300.");
+  if (value === undefined) return 1000;
+  if (!Number.isSafeInteger(value) || value < 1 || value > 1000) {
+    throw appError("invalid_limit", "graph limit must be an integer between 1 and 1000.");
   }
   return value;
 }
@@ -310,14 +305,6 @@ function normalizeReferenceDepth(value: number | undefined): number {
     );
   }
   return value;
-}
-
-function graphPreview(value: string): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  const characters = Array.from(normalized);
-  return characters.length <= 180
-    ? normalized
-    : `${characters.slice(0, 179).join("")}…`;
 }
 
 function keyHash(key: string): string {
@@ -1123,11 +1110,6 @@ export class SwarmbookService {
         id: post.id,
         thread_id: post.parent ?? post.id,
         board: post.board,
-        owner: post.owner,
-        mininame: post.author === "human" ? null : post.author,
-        title: post.title,
-        preview: graphPreview(post.body),
-        at: new Date(post.at).toISOString(),
         kind: post.parent === null ? "thread" : "reply",
       })),
       edges,
