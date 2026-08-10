@@ -143,19 +143,26 @@ describe("server-rendered web UI", () => {
     expect(() => new Function(graphScript)).not.toThrow();
     expect(graphScript).toContain("cooldownTime(Infinity)");
     expect(graphScript).toContain("d3ReheatSimulation()");
-    expect(graphScript).toContain("radialForce = (squaredDistance - .5) * Math.exp(-squaredDistance)");
-    expect(graphScript).toContain("strength * sourceMass * radialForce");
-    expect(graphScript).toContain("massWellForce(.8, 24, .72, 3)");
+    expect(graphScript).toContain("function gourceHierarchyForce(links)");
+    expect(graphScript).toContain("surface-to-surface");
+    expect(graphScript).toContain("minimumDistance - distance");
+    expect(graphScript).toContain("var targetX = parent.x + branchX / branchLength * restDistance");
+    expect(graphScript).toContain("graph.d3Force('gource-hierarchy', gourceHierarchyForce(data.links))");
     expect(graphScript).toContain("d3Force('charge', null)");
+    expect(graphScript).toContain("d3Force('link', null)");
     expect(graphScript).toContain("d3Force('center', null)");
     expect(graphScript).toContain("center.addEventListener('click', centerGraph)");
     expect(graphScript).not.toContain("onEngineTick");
     expect(graphScript).not.toContain("globalGravity");
-    expect(graphScript).toContain("node.kind === 'board' ? 'after'");
+    expect(graphScript).toContain("nodeCanvasObjectMode(function () { return 'replace'; })");
+    expect(graphScript).toContain("linkCanvasObjectMode(function () { return 'replace'; })");
+    expect(graphScript).toContain("context.shadowBlur");
     expect(graphScript).toContain("fillText('/' + node.board + '/'");
-    expect(graphScript).toContain("randomisePositions(data)");
-    expect(graphScript).toContain("var data = graphData(payload);\n    randomisePositions(data);");
+    expect(graphScript).toContain("randomiseHierarchy(data)");
+    expect(graphScript).toContain("var data = graphData(payload);\n    randomiseHierarchy(data);");
     expect(graphScript).not.toContain("ringRadius");
+    expect(graphScript).not.toContain("massWellForce");
+    expect(graphScript).not.toContain("zoomToFit");
     expect(graphScript).not.toContain("linkVisibility");
     expect(graphScript).toContain("fetch('/graph.json?limit=1000&reference_depth=2'");
     expect(graphScript.match(/fetch\(/g)?.length).toBe(1);
@@ -165,35 +172,39 @@ describe("server-rendered web UI", () => {
 
     const forceSourceEnd = graphScript.indexOf("  function graphData");
     const exposed = {} as {
-      force: (strength: number, padding: number, theta: number, cutoff: number) => {
+      force: (links: Array<Record<string, string>>) => {
         (alpha: number): void;
-        initialize(nodes: Array<Record<string, number | string>>): void;
+        initialize(nodes: Array<Record<string, number | string | undefined>>): void;
       };
     };
     new Function(
       "exposed",
-      `${graphScript.slice(0, forceSourceEnd)}exposed.force = massWellForce;})();`,
+      `${graphScript.slice(0, forceSourceEnd)}exposed.force = gourceHierarchyForce;})();`,
     )(exposed);
-    const runPair = (distance: number) => {
-      const nodes = [
-        { kind: "reply", mass: 1, index: 0, x: 0, y: 0, vx: 0, vy: 0 },
-        { kind: "reply", mass: 4, index: 1, x: distance, y: 0, vx: 0, vy: 0 },
-      ];
-      const force = exposed.force(.8, 24, .72, 3);
-      force.initialize(nodes);
-      force(1);
-      return nodes;
-    };
-    const equilibrium = 6 + 6 + 24;
-    const balanced = runPair(equilibrium);
-    expect(balanced[0]!.vx).toBeCloseTo(0, 10);
-    const attracting = runPair(equilibrium * Math.sqrt(3));
-    expect(attracting[0]!.vx).toBeGreaterThan(0);
-    expect(attracting[1]!.vx).toBeLessThan(0);
-    expect(attracting[0]!.mass * attracting[0]!.vx + attracting[1]!.mass * attracting[1]!.vx).toBeCloseTo(0, 10);
-    const repelling = runPair(equilibrium / 2);
-    expect(repelling[0]!.vx).toBeLessThan(0);
-    expect(repelling[1]!.vx).toBeGreaterThan(0);
+    const colliding = [
+      { id: "a", kind: "reply", board: "til", x: 0, y: 0, vx: 0, vy: 0 },
+      { id: "b", kind: "reply", board: "meta", x: 4, y: 0, vx: 0, vy: 0 },
+    ];
+    const collisionForce = exposed.force([]);
+    collisionForce.initialize(colliding);
+    collisionForce(1);
+    expect(colliding[0]!.vx).toBeLessThan(0);
+    expect(colliding[1]!.vx).toBeGreaterThan(0);
+
+    const hierarchy = [
+      { id: "board", kind: "board", postCount: 4, x: 200, y: 0, vx: 0, vy: 0 },
+      { id: "thread", kind: "thread", threadSize: 2, x: 250, y: 0, vx: 0, vy: 0 },
+      { id: "reply", kind: "reply", x: 250, y: 50, vx: 0, vy: 0 },
+    ];
+    const hierarchyForce = exposed.force([
+      { source: "board", target: "thread", kind: "contains" },
+      { source: "thread", target: "reply", kind: "reply" },
+    ]);
+    hierarchyForce.initialize(hierarchy);
+    hierarchyForce(1);
+    expect(hierarchy[0]!.vx).toBeLessThan(0);
+    expect(hierarchy[2]!.vx).toBeGreaterThan(0);
+    expect(hierarchy[2]!.vy).toBeLessThan(0);
 
     const unauthorized = await app.request("/graph.json");
     expect(unauthorized.status).toBe(302);
