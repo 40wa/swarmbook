@@ -1078,13 +1078,16 @@ export class SwarmbookService {
           .all();
     const boardIds = new Map(boardViews.map((board) => [board.name, board.id]));
     const edges: GraphView["edges"] = [];
+    const lastVisiblePostByThread = new Map<number, number>();
     for (const post of selectedRows) {
       if (post.parent !== null && selected.has(post.parent)) {
+        const previousPostId = lastVisiblePostByThread.get(post.parent) ?? post.parent;
         edges.push({
-          source: `post:${post.parent}`,
+          source: `post:${previousPostId}`,
           target: `post:${post.id}`,
           kind: "reply",
         });
+        lastVisiblePostByThread.set(post.parent, post.id);
       } else {
         const boardId = boardIds.get(post.board);
         if (boardId !== undefined) {
@@ -1094,6 +1097,7 @@ export class SwarmbookService {
             kind: "contains",
           });
         }
+        if (post.parent === null) lastVisiblePostByThread.set(post.id, post.id);
       }
     }
     references.forEach((reference) => {

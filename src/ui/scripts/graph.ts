@@ -47,9 +47,48 @@ export const graphScript = `
     return value / 4294967295;
   }
 
+  var FAMILY_HUES = [210, 18, 145, 278, 42, 330, 184, 96, 255, 5, 165, 60];
+
+  function familyColour(hue, kind) {
+    if (kind === 'board') return 'hsl(' + hue + ', 72%, 49%)';
+    if (kind === 'thread') return 'hsl(' + hue + ', 68%, 58%)';
+    return 'hsla(' + hue + ', 58%, 64%, .82)';
+  }
+
+  function familyGravity(strength) {
+    var nodes = [];
+    function force(alpha) {
+      var centers = {};
+      nodes.forEach(function (node) {
+        if (node.kind === 'board') centers[node.board] = node;
+      });
+      nodes.forEach(function (node) {
+        if (node.kind === 'board') return;
+        var center = centers[node.board];
+        if (!center) return;
+        node.vx += (center.x - node.x) * strength * alpha;
+        node.vy += (center.y - node.y) * strength * alpha;
+      });
+    }
+    force.initialize = function (nextNodes) { nodes = nextNodes || []; };
+    return force;
+  }
+
+  function globalGravity(strength) {
+    var nodes = [];
+    function force(alpha) {
+      nodes.forEach(function (node) {
+        node.vx += -node.x * strength * alpha;
+        node.vy += -node.y * strength * alpha;
+      });
+    }
+    force.initialize = function (nextNodes) { nodes = nextNodes || []; };
+    return force;
+  }
+
   function graphData(payload) {
     var nodes = [];
-    var boardPositions = {};
+    var boardFamilies = {};
     var boardCount = Math.max(1, payload.boards.length);
     var ringRadius = Math.max(180, boardCount * 58);
 
@@ -59,13 +98,15 @@ export const graphScript = `
         x: Math.cos(angle) * ringRadius,
         y: Math.sin(angle) * ringRadius
       };
-      boardPositions[board.name] = position;
+      var hue = FAMILY_HUES[index % FAMILY_HUES.length];
+      boardFamilies[board.name] = { position: position, hue: hue };
       nodes.push({
         id: 'board:' + board.id,
         kind: 'board',
         board: board.name,
         description: board.description,
         postCount: board.post_count,
+        familyHue: hue,
         x: position.x,
         y: position.y,
         url: '/boards/' + encodeURIComponent(board.name)
@@ -75,7 +116,8 @@ export const graphScript = `
     var threadPositions = {};
     payload.posts.forEach(function (post) {
       if (post.kind !== 'thread') return;
-      var center = boardPositions[post.board] || { x: 0, y: 0 };
+      var family = boardFamilies[post.board] || { position: { x: 0, y: 0 }, hue: 210 };
+      var center = family.position;
       var angle = seeded(post.id, 11) * Math.PI * 2;
       var radius = 55 + seeded(post.id, 29) * 95;
       var position = {
@@ -89,6 +131,7 @@ export const graphScript = `
         threadId: post.thread_id,
         kind: post.kind,
         board: post.board,
+        familyHue: family.hue,
         x: position.x,
         y: position.y,
         url: '/boards/' + encodeURIComponent(post.board) + '/threads/' + post.thread_id + '#post-' + post.id
@@ -97,7 +140,8 @@ export const graphScript = `
 
     payload.posts.forEach(function (post) {
       if (post.kind === 'thread') return;
-      var center = threadPositions[post.thread_id] || boardPositions[post.board] || { x: 0, y: 0 };
+      var family = boardFamilies[post.board] || { position: { x: 0, y: 0 }, hue: 210 };
+      var center = threadPositions[post.thread_id] || family.position;
       var angle = seeded(post.id, 47) * Math.PI * 2;
       var radius = 18 + seeded(post.id, 71) * 38;
       nodes.push({
@@ -106,20 +150,25 @@ export const graphScript = `
         threadId: post.thread_id,
         kind: post.kind,
         board: post.board,
+        familyHue: family.hue,
         x: center.x + Math.cos(angle) * radius,
         y: center.y + Math.sin(angle) * radius,
         url: '/boards/' + encodeURIComponent(post.board) + '/threads/' + post.thread_id + '#post-' + post.id
       });
     });
 
+    var nodesById = {};
+    nodes.forEach(function (node) { nodesById[node.id] = node; });
     return {
       nodes: nodes,
       links: payload.edges.map(function (edge, index) {
+        var sourceNode = nodesById[edge.source];
         return {
           id: 'edge:' + index,
           source: edge.source,
           target: edge.target,
-          kind: edge.kind
+          kind: edge.kind,
+          familyHue: sourceNode ? sourceNode.familyHue : 210
         };
       })
     };
@@ -142,27 +191,36 @@ export const graphScript = `
     graphContainer = null;
   }
 
+  function randomisePositions(data) {
+    var spread = Math.max(260, Math.sqrt(data.nodes.length) * 28);
+    data.nodes.forEach(function (node) {
+      var angle = Math.random() * Math.PI * 2;
+      var radius = Math.sqrt(Math.random()) * spread;
+      node.x = Math.cos(angle) * radius;
+      node.y = Math.sin(angle) * radius;
+      node.vx = 0;
+      node.vy = 0;
+      node.fx = undefined;
+      node.fy = undefined;
+    });
+  }
+
   function render(container, payload, ForceGraph) {
     if (!document.documentElement.contains(container)) return;
     destroyGraph();
     graphContainer = container;
     var shell = container.closest('.board-graph-shell');
     var status = shell.querySelector('[data-graph-status]');
-    var fit = shell.querySelector('[data-graph-fit]');
-    var reheat = shell.querySelector('[data-graph-layout]');
-    var refs = shell.querySelector('[data-graph-references]');
+    var reset = shell.querySelector('[data-graph-reset]');
     var palette = colours();
     var data = graphData(payload);
 
     function nodeColour(node) {
-      if (node.kind === 'board') return palette.accent;
-      if (node.kind === 'thread') return palette.text;
-      return palette.dim;
+      return familyColour(node.familyHue, node.kind);
     }
     function linkColour(link) {
-      if (link.kind === 'contains') return palette.accent;
-      if (link.kind === 'reference') return palette.dim;
-      return palette.rule;
+      var alpha = link.kind === 'reference' ? .32 : .58;
+      return 'hsla(' + link.familyHue + ', 60%, 54%, ' + alpha + ')';
     }
     function sizeGraph() {
       if (!graph || graphContainer !== container) return;
@@ -174,13 +232,23 @@ export const graphScript = `
       .height(container.clientHeight)
       .backgroundColor(palette.page)
       .graphData(data)
-      .nodeRelSize(3.4)
+      .nodeRelSize(3.8)
       .nodeVal(function (node) {
-        if (node.kind === 'board') return 34;
-        if (node.kind === 'thread') return 4;
-        return 1;
+        if (node.kind === 'board') return 72;
+        if (node.kind === 'thread') return 6;
+        return 1.8;
       })
       .nodeColor(nodeColour)
+      .nodeCanvasObjectMode(function (node) { return node.kind === 'board' ? 'after' : undefined; })
+      .nodeCanvasObject(function (node, context, globalScale) {
+        if (node.kind !== 'board') return;
+        var fontSize = 11 / globalScale;
+        context.font = '700 ' + fontSize + 'px ui-monospace, SFMono-Regular, Menlo, monospace';
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        context.fillStyle = palette.page;
+        context.fillText('/' + node.board + '/', node.x, node.y);
+      })
       .nodeLabel(function (node) {
         if (node.kind === 'board') {
           return '/' + node.board + '/ · ' + node.postCount + ' posts<br>' + node.description;
@@ -194,43 +262,49 @@ export const graphScript = `
         return .55;
       })
       .linkLineDash(function (link) { return link.kind === 'reference' ? [3, 4] : null; })
-      .linkVisibility(function (link) { return refs.checked || link.kind !== 'reference'; })
       .onNodeClick(function (node) { location.assign(node.url); })
       .onNodeDragEnd(function () { graph.d3ReheatSimulation(); })
       .cooldownTicks(Infinity)
       .cooldownTime(Infinity)
-      .d3AlphaDecay(.012)
-      .d3VelocityDecay(.32);
+      .d3AlphaDecay(.018)
+      .d3VelocityDecay(.48);
 
     var charge = graph.d3Force('charge');
     if (charge && charge.strength) {
       charge.strength(function (node) {
-        if (node.kind === 'board') return -520;
-        if (node.kind === 'thread') return -55;
-        return -18;
-      }).distanceMax(700);
+        if (node.kind === 'board') return -130;
+        if (node.kind === 'thread') return -28;
+        return -9;
+      }).distanceMax(320);
     }
     var linkForce = graph.d3Force('link');
     if (linkForce && linkForce.distance) {
       linkForce
         .distance(function (link) {
-          if (link.kind === 'contains') return 82;
-          if (link.kind === 'reference') return 145;
-          return 27;
+          if (link.kind === 'contains') return 70;
+          if (link.kind === 'reference') return 125;
+          return 23;
         })
         .strength(function (link) {
-          if (link.kind === 'contains') return .8;
-          if (link.kind === 'reference') return .055;
-          return .72;
+          if (link.kind === 'contains') return .9;
+          if (link.kind === 'reference') return .04;
+          return .82;
         });
     }
+    graph.d3Force('family-gravity', familyGravity(.032));
+    graph.d3Force('global-gravity', globalGravity(.004));
+    var centerForce = graph.d3Force('center');
+    if (centerForce && centerForce.strength) centerForce.strength(.12);
     graph.d3ReheatSimulation();
     status.textContent = statusText(payload);
 
-    fit.addEventListener('click', function () { graph.zoomToFit(350, 45); });
-    reheat.addEventListener('click', function () { graph.d3ReheatSimulation(); });
-    refs.addEventListener('change', function () {
-      graph.linkVisibility(function (link) { return refs.checked || link.kind !== 'reference'; });
+    reset.addEventListener('click', function () {
+      randomisePositions(data);
+      graph.graphData(data);
+      graph.d3ReheatSimulation();
+      setTimeout(function () {
+        if (graph && graphContainer === container) graph.zoomToFit(450, 45);
+      }, 650);
     });
 
     resizeObserver = new ResizeObserver(sizeGraph);

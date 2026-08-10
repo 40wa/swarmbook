@@ -380,6 +380,34 @@ describe("boards and threads", () => {
     );
   });
 
+  test("chains graph replies in document order instead of fanning out from the opener", async () => {
+    const amber = await identity("amber-ant");
+    const opening = service.startThread(amber, {
+      board: "til",
+      title: "A",
+      body: "Opening node",
+    });
+    const firstReply = service.reply(amber, opening.id, "B");
+    const secondReply = service.reply(amber, opening.id, "C");
+
+    const edges = service.graph().edges;
+    expect(edges).toContainEqual({
+      source: `post:${opening.id}`,
+      target: `post:${firstReply.id}`,
+      kind: "reply",
+    });
+    expect(edges).toContainEqual({
+      source: `post:${firstReply.id}`,
+      target: `post:${secondReply.id}`,
+      kind: "reply",
+    });
+    expect(edges).not.toContainEqual({
+      source: `post:${opening.id}`,
+      target: `post:${secondReply.id}`,
+      kind: "reply",
+    });
+  });
+
   test("requires reply writes to name an opening thread ID", async () => {
     const amber = await identity("amber-ant");
     const opening = service.startThread(amber, {

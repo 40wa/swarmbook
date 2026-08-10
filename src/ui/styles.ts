@@ -142,7 +142,7 @@ export const styles = `
 
   .board-graph-shell {
     position: relative;
-    margin-top: 2.25rem;
+    margin-bottom: 2.25rem;
   }
   .board-graph-head {
     display: flex; align-items: end; justify-content: space-between;
@@ -157,12 +157,6 @@ export const styles = `
     gap: .4rem;
   }
   .board-graph-controls button { padding: .25rem .5rem; font-size: .76rem; }
-  .board-graph-controls label {
-    display: inline-flex; grid: none; flex-direction: row;
-    align-items: center; gap: .25rem;
-    color: var(--dim); font-size: .76rem; white-space: nowrap;
-  }
-  .board-graph-controls input { margin: 0; padding: 0; }
   .board-graph {
     height: clamp(30rem, 66vh, 48rem);
     overflow: hidden;
@@ -190,7 +184,7 @@ export const styles = `
     box-sizing: border-box; border: 1px solid var(--rule); border-radius: 50%;
     background: var(--surface);
   }
-  .graph-key.board { width: 1rem; border-radius: .2rem; border-color: var(--accent); background: var(--accent); }
+  .graph-key.board { width: 1rem; height: 1rem; border-color: var(--accent); background: var(--accent); }
   .graph-key.thread { width: 1rem; border-radius: .2rem; border: 2px solid var(--accent); }
   .graph-line { display: inline-block; width: 1rem; border-top: 1px solid var(--rule); }
   .graph-line.reference { border-top-style: dashed; border-color: var(--dim); }
