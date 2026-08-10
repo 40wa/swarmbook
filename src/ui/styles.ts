@@ -140,6 +140,80 @@ export const styles = `
     padding: .1rem .5rem; font-size: .8rem;
   }
 
+  .board-graph-shell {
+    position: relative;
+    margin-top: 2.25rem;
+  }
+  .board-graph-head {
+    display: flex; align-items: end; justify-content: space-between;
+    gap: 1rem; margin-bottom: .55rem;
+  }
+  .board-graph-head h2 { margin: 0; }
+  .board-graph-head p {
+    margin: .15rem 0 0; color: var(--dim); font-size: .76rem;
+  }
+  .board-graph-controls {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end;
+    gap: .4rem;
+  }
+  .board-graph-controls button { padding: .25rem .5rem; font-size: .76rem; }
+  .board-graph-controls label {
+    display: inline-flex; grid: none; flex-direction: row;
+    align-items: center; gap: .25rem;
+    color: var(--dim); font-size: .76rem; white-space: nowrap;
+  }
+  .board-graph-controls input { margin: 0; padding: 0; }
+  .board-graph {
+    height: clamp(30rem, 66vh, 48rem);
+    overflow: hidden;
+    border: 1px solid var(--rule); border-radius: .35rem;
+    background: color-mix(in oklab, var(--surface) 65%, var(--page-bg));
+    touch-action: none;
+  }
+  .board-graph.graph-error {
+    height: 10rem;
+    background: repeating-linear-gradient(
+      135deg,
+      transparent,
+      transparent 10px,
+      color-mix(in oklab, var(--rule) 30%, transparent) 10px,
+      color-mix(in oklab, var(--rule) 30%, transparent) 20px
+    );
+  }
+  .graph-tooltip {
+    position: absolute; z-index: 30;
+    display: grid; gap: .18rem;
+    width: min(19rem, calc(100vw - 3rem));
+    padding: .45rem .55rem;
+    border: 1px solid var(--accent); border-radius: .3rem;
+    background: var(--surface-elevated); color: var(--page-fg);
+    box-shadow: 0 8px 22px rgba(0,0,0,.28);
+    font-size: .72rem; line-height: 1.35;
+    pointer-events: none;
+  }
+  .graph-tooltip[hidden] { display: none; }
+  .graph-tooltip strong { color: var(--accent); }
+  .graph-tooltip-meta { color: var(--dim); }
+  .board-graph-legend {
+    display: flex; flex-wrap: wrap; gap: .75rem;
+    margin-top: .45rem; color: var(--dim); font-size: .7rem;
+  }
+  .board-graph-legend span { display: inline-flex; align-items: center; gap: .28rem; }
+  .graph-key {
+    display: inline-block; width: .7rem; height: .7rem;
+    box-sizing: border-box; border: 1px solid var(--rule); border-radius: 50%;
+    background: var(--surface);
+  }
+  .graph-key.board { width: 1rem; border-radius: .2rem; border-color: var(--accent); background: var(--accent); }
+  .graph-key.thread { width: 1rem; border-radius: .2rem; border: 2px solid var(--accent); }
+  .graph-line { display: inline-block; width: 1rem; border-top: 1px solid var(--rule); }
+  .graph-line.reference { border-top-style: dashed; border-color: var(--dim); }
+  @media (max-width: 620px) {
+    .board-graph-head { align-items: start; flex-direction: column; }
+    .board-graph-controls { justify-content: flex-start; }
+    .board-graph { height: 62vh; min-height: 24rem; }
+  }
+
   .pager {
     display: flex; gap: 1rem; align-items: baseline;
     margin: 1.25rem 0; font-size: .85rem; color: var(--dim);
@@ -309,6 +383,8 @@ export const styles = `
   .tail-toggle {
     position: relative;
     display: inline-flex; align-items: center; gap: .35rem;
+    flex: 0 0 auto; padding: .2rem .45rem;
+    font-size: .76rem; white-space: nowrap;
   }
   .tail-toggle .badge {
     background: var(--accent); color: white;
@@ -362,6 +438,13 @@ export const styles = `
     font-variant-numeric: tabular-nums;
   }
   .live-tail .unread-count:empty { display: none; }
+  .tail-close {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.7rem; height: 1.7rem; margin-left: .25rem; padding: 0;
+    border: 0; color: var(--dim); font-size: 1.1rem; line-height: 1;
+  }
+  .tail-close:hover { color: var(--accent); }
+  @media (min-width: 1000px) { .tail-close { display: none; } }
   .live-tail a { color: inherit; text-decoration: none; display: block; }
   .live-tail .row {
     display: flex; align-items: baseline; gap: .35rem;

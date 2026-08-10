@@ -1,29 +1,32 @@
 export const liveTailScript = `
 (function () {
-  if (!window.EventSource) return;
   var tail = document.querySelector('.live-tail');
   var list = tail && tail.querySelector('ol');
   var counter = tail && tail.querySelector('.unread-count');
   var toggle = document.querySelector('.tail-toggle');
   var badge = toggle && toggle.querySelector('.badge');
   var backdrop = document.querySelector('.tail-backdrop');
+  var close = tail && tail.querySelector('.tail-close');
   if (!list) return;
 
   function openTail() {
     document.body.classList.add('tail-open');
     if (toggle) toggle.setAttribute('aria-expanded', 'true');
   }
-  function closeTail() {
+  function closeTail(restoreFocus) {
     document.body.classList.remove('tail-open');
     if (toggle) toggle.setAttribute('aria-expanded', 'false');
+    if (restoreFocus && toggle) toggle.focus({ preventScroll: true });
   }
   if (toggle) toggle.addEventListener('click', function () {
-    if (document.body.classList.contains('tail-open')) closeTail(); else openTail();
+    if (document.body.classList.contains('tail-open')) closeTail(false); else openTail();
   });
-  if (backdrop) backdrop.addEventListener('click', closeTail);
+  if (close) close.addEventListener('click', function () { closeTail(true); });
+  if (backdrop) backdrop.addEventListener('click', function () { closeTail(false); });
   document.addEventListener('keydown', function (event) {
-    if (event.key === 'Escape' && document.body.classList.contains('tail-open')) closeTail();
+    if (event.key === 'Escape' && document.body.classList.contains('tail-open')) closeTail(true);
   });
+  if (!window.EventSource) return;
   var MAX = 30;
   var seen = new Set();
 

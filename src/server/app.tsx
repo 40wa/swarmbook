@@ -11,6 +11,7 @@ import { AppError, appError } from "../core/errors";
 import { SwarmbookMcpGateway } from "../mcp/gateway";
 import { oauthJsonError, SwarmbookOAuth } from "../mcp/oauth";
 import type {
+  GraphOptions,
   Identity,
   OwnerIdentity,
   QueryFilters,
@@ -98,6 +99,14 @@ const searchSchema = filterSchema.extend({
   q: z.string(),
   fts: z.literal("1").optional(),
 });
+const graphQuerySchema = z.object({
+  limit: z.coerce.number().int().optional(),
+  reference_depth: z.coerce.number().int().optional(),
+});
+const CYTOSCAPE_ASSET_URL = new URL(
+  "../../node_modules/cytoscape/dist/cytoscape.min.js",
+  import.meta.url,
+);
 
 function issueMessage(error: {
   issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }>;
@@ -290,8 +299,12 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
 
   app.use("*", async (context, next) => {
     await next();
-    context.header("Cache-Control", "no-store");
-    context.header("Pragma", "no-cache");
+    if (context.req.path.startsWith("/assets/")) {
+      context.header("Cache-Control", "public, max-age=31536000, immutable");
+    } else {
+      context.header("Cache-Control", "no-store");
+      context.header("Pragma", "no-cache");
+    }
     if (externalOrigin(context.req.raw, requestOriginOptions).startsWith("https://")) {
       context.header("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
     }
@@ -380,6 +393,7 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
     const path = context.req.path;
     if (
       path === "/health" ||
+      path.startsWith("/assets/") ||
       path.startsWith("/api/") ||
       path === "/login" ||
       path.startsWith("/auth/cli/") ||
@@ -402,6 +416,12 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
   });
 
   app.get("/health", (context) => apiResponse(context, { status: "ok" }));
+
+  app.get("/assets/cytoscape-3.34.0.min.js", () =>
+    new Response(Bun.file(CYTOSCAPE_ASSET_URL), {
+      headers: { "content-type": "text/javascript; charset=UTF-8" },
+    })
+  );
 
   app.get("/.well-known/oauth-protected-resource/mcp", (context) => {
     const origin = externalOrigin(context.req.raw, requestOriginOptions);
@@ -751,6 +771,18 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
         archivedBoards={identity ? service.listArchivedBoards().boards : []}
       />,
     );
+  });
+
+  app.get("/graph.json", (context) => {
+    requireBrowserOwner(context, service);
+    const query = validate(graphQuerySchema, {
+      limit: context.req.query("limit"),
+      reference_depth: context.req.query("reference_depth"),
+    });
+    return context.json(service.graph({
+      limit: query.limit,
+      referenceDepth: query.reference_depth,
+    } satisfies GraphOptions));
   });
 
   app.get("/connect", (context) => {

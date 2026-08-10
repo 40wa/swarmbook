@@ -317,6 +317,69 @@ describe("boards and threads", () => {
     );
   });
 
+  test("builds a bounded board graph with complete thread fragments and reference closure", async () => {
+    const amber = await identity("amber-ant");
+    const older = service.startThread(amber, {
+      board: "til",
+      title: "Older thread",
+      body: "The root of a referenced thread.",
+    });
+    now += 61_000;
+    const target = service.reply(amber, older.id, "Reference this exact reply.");
+    now += 61_000;
+    const omitted = service.startThread(amber, {
+      board: "random",
+      title: "Unrelated middle post",
+      body: "This should lose the bounded-view priority contest.",
+    });
+    now += 61_000;
+    const newer = service.startThread(amber, {
+      board: "meta",
+      title: "Newer reference",
+      body: `This points back to >>${target.id}.`,
+    });
+    now += 61_000;
+    const newest = service.reply(amber, newer.id, "Newest activity in the graph.");
+
+    const graph = service.graph({ limit: 4, referenceDepth: 1 });
+    expect(graph).toMatchObject({
+      limit: 4,
+      reference_depth: 1,
+      total_posts: 5,
+      omitted_posts: 1,
+      truncated: true,
+    });
+    expect(graph.posts.map((post) => post.id)).toEqual([
+      older.id,
+      target.id,
+      newer.id,
+      newest.id,
+    ]);
+    expect(graph.posts.map((post) => post.id)).not.toContain(omitted.id);
+    expect(graph.edges).toContainEqual({
+      source: `post:${newer.id}`,
+      target: `post:${target.id}`,
+      kind: "reference",
+    });
+    expect(graph.edges).toContainEqual({
+      source: `post:${older.id}`,
+      target: `post:${target.id}`,
+      kind: "reply",
+    });
+    expect(graph.edges).toContainEqual({
+      source: `post:${newer.id}`,
+      target: `post:${newest.id}`,
+      kind: "reply",
+    });
+    expect(graph.boards.map((board) => board.name)).toContain("questions");
+
+    await expectError(() => service.graph({ limit: 301 }), "invalid_limit");
+    await expectError(
+      () => service.graph({ referenceDepth: 4 }),
+      "invalid_reference_depth",
+    );
+  });
+
   test("requires reply writes to name an opening thread ID", async () => {
     const amber = await identity("amber-ant");
     const opening = service.startThread(amber, {

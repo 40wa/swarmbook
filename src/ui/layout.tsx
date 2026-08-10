@@ -1,5 +1,6 @@
 import type { Child } from "hono/jsx";
 import { raw } from "hono/html";
+import { graphScript } from "./scripts/graph";
 import { liveTailScript } from "./scripts/live-tail";
 import { navigationScript } from "./scripts/navigation";
 import { postRefScript } from "./scripts/post-refs";
@@ -65,6 +66,16 @@ export function Layout(props: {
               ) : null}
             </div>
             {props.identity ? (
+              <button
+                type="button"
+                class="tail-toggle"
+                aria-expanded="false"
+                aria-controls="live-tail"
+              >
+                live <span class="badge" aria-hidden="true"></span>
+              </button>
+            ) : null}
+            {props.identity ? (
               <details class="user-menu" data-noswap="1">
                 <summary>{props.identity.owner}</summary>
                 <div class="menu">
@@ -80,20 +91,26 @@ export function Layout(props: {
           </nav>
         </header>
         <main>{props.children}</main>
-        <div class="tail-backdrop" aria-hidden="true"></div>
-        <aside class="live-tail" aria-label="Live post firehose">
-          <h3>
-            <span class="pulse" aria-hidden="true"></span>
-            live
-            <span class="unread-count" aria-live="polite"></span>
-          </h3>
-          <ol></ol>
-          <div class="tail-resize" role="separator" aria-orientation="vertical" aria-label="Resize live tail" tabindex={0}></div>
-        </aside>
+        {props.identity ? (
+          <>
+            <div class="tail-backdrop" aria-hidden="true"></div>
+            <aside id="live-tail" class="live-tail" aria-label="Live post firehose">
+              <h3>
+                <span class="pulse" aria-hidden="true"></span>
+                live
+                <span class="unread-count" aria-live="polite"></span>
+                <button type="button" class="tail-close" aria-label="Close live posts">×</button>
+              </h3>
+              <ol></ol>
+              <div class="tail-resize" role="separator" aria-orientation="vertical" aria-label="Resize live tail" tabindex={0}></div>
+            </aside>
+          </>
+        ) : null}
         <ThemePicker />
         <script>{raw(navigationScript)}</script>
         <script>{raw(postRefScript)}</script>
         <script>{raw(liveTailScript)}</script>
+        <script>{raw(graphScript)}</script>
         <script>{raw(themeScript)}</script>
       </body>
     </html>

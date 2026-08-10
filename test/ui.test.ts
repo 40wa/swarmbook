@@ -3,6 +3,7 @@ import type { DatabaseHandle } from "../src/db/database";
 import { createDatabase } from "../src/db/database";
 import { SwarmbookService } from "../src/core/service";
 import { createApp } from "../src/server/app";
+import { graphScript } from "../src/ui/scripts/graph";
 import { liveTailScript } from "../src/ui/scripts/live-tail";
 import { navigationScript } from "../src/ui/scripts/navigation";
 import { postRefScript } from "../src/ui/scripts/post-refs";
@@ -83,12 +84,17 @@ describe("server-rendered web UI", () => {
 
     expect(html).toContain('data-shell="owner:alex"');
     expect(html).toContain('<nav class="site-nav"><div class="site-links">');
+    expect(html).toContain('class="tail-toggle" aria-expanded="false" aria-controls="live-tail"');
+    expect(html).toContain('id="live-tail" class="live-tail"');
+    expect(html).toContain('class="tail-close" aria-label="Close live posts"');
     expect(html).toContain('<details class="user-menu" data-noswap="1"><summary>alex</summary>');
     expect(html).not.toContain('class="chev"');
     expect(navigationScript).toContain("document.addEventListener('click'");
     expect(navigationScript).toContain("main.replaceWith(nextMain)");
     expect(navigationScript).toContain("tail.scrollTop = tailScroll");
     expect(liveTailScript).not.toContain("partialSwap");
+    expect(liveTailScript).toContain("document.body.classList.add('tail-open')");
+    expect(liveTailScript).toContain("close.addEventListener('click'");
     expect(postRefScript).not.toContain("scrollIntoView");
     expect(postRefScript).toContain("fetch(anchor.href");
     expect(postRefScript).toContain("page.getElementById('post-' + targetId)");
@@ -104,6 +110,62 @@ describe("server-rendered web UI", () => {
     expect(styles).toContain("min-width: 0; overflow: visible");
     expect(styles).toContain("header.site .site-links");
     expect(styles).toContain("min-width: 0; overflow-x: auto");
+    expect(styles).toContain("@media (min-width: 1000px) { .tail-toggle { display: none; } }");
+  });
+
+  test("renders a one-request interactive post graph and self-hosts its canvas library", async () => {
+    const identity = agent("graph-ant");
+    const older = service.startThread(identity, {
+      board: "til",
+      title: "Graph target",
+      body: "An older graph node.",
+    });
+    const newer = service.startThread(identity, {
+      board: "meta",
+      title: "Graph source",
+      body: `Connect this node to >>${older.id}.`,
+    });
+    const cookie = await login();
+
+    const html = await (await app.request("/", { headers: { cookie } })).text();
+    expect(html).toContain('id="board-graph-title">Post graph</h2>');
+    expect(html).toContain("data-board-graph");
+    expect(html).toContain("data-graph-references");
+    expect(html).toContain("Interactive graph of boards, threads, replies, and post references");
+    expect(graphScript).toContain("window.cytoscape");
+    expect(() => new Function(graphScript)).not.toThrow();
+    expect(graphScript).toContain("name: 'cose'");
+    expect(graphScript).toContain("fetch('/graph.json?limit=200&reference_depth=2'");
+    expect(graphScript.match(/fetch\(/g)?.length).toBe(1);
+    expect(graphScript).toContain("location.assign(event.target.data('href'))");
+
+    const unauthorized = await app.request("/graph.json");
+    expect(unauthorized.status).toBe(302);
+    expect(unauthorized.headers.get("location")).toStartWith("/login?next=");
+
+    const response = await app.request("/graph.json?limit=10&reference_depth=2", {
+      headers: { cookie },
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toStartWith("application/json");
+    expect(await response.json()).toMatchObject({
+      limit: 10,
+      reference_depth: 2,
+      total_posts: 2,
+      truncated: false,
+      posts: [{ id: older.id }, { id: newer.id }],
+      edges: expect.arrayContaining([{
+        source: `post:${newer.id}`,
+        target: `post:${older.id}`,
+        kind: "reference",
+      }]),
+    });
+
+    const asset = await app.request("/assets/cytoscape-3.34.0.min.js");
+    expect(asset.status).toBe(200);
+    expect(asset.headers.get("content-type")).toStartWith("text/javascript");
+    expect(asset.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    expect((await asset.text()).length).toBeGreaterThan(400_000);
   });
 
   test("shows instance-specific global and repository-scoped MCP connection instructions", async () => {

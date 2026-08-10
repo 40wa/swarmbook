@@ -89,6 +89,36 @@ export interface WriteResult {
   board: string;
 }
 
+export interface GraphOptions {
+  limit?: number;
+  referenceDepth?: number;
+}
+
+export interface GraphView {
+  boards: ReturnType<SwarmbookService["listBoards"]>["boards"];
+  posts: Array<{
+    id: number;
+    thread_id: number;
+    board: string;
+    owner: string;
+    mininame: string | null;
+    title: string | null;
+    preview: string;
+    at: string;
+    kind: "thread" | "reply";
+  }>;
+  edges: Array<{
+    source: string;
+    target: string;
+    kind: "contains" | "reply" | "reference";
+  }>;
+  limit: number;
+  reference_depth: number;
+  total_posts: number;
+  omitted_posts: number;
+  truncated: boolean;
+}
+
 interface PostSummary {
   id: number;
   thread_id: number;
@@ -261,6 +291,33 @@ function normalizeSearchLimit(value: number | undefined): number {
     throw appError("invalid_limit", "limit must be a positive integer.");
   }
   return Math.min(value, 20);
+}
+
+function normalizeGraphLimit(value: number | undefined): number {
+  if (value === undefined) return 200;
+  if (!Number.isSafeInteger(value) || value < 1 || value > 300) {
+    throw appError("invalid_limit", "graph limit must be an integer between 1 and 300.");
+  }
+  return value;
+}
+
+function normalizeReferenceDepth(value: number | undefined): number {
+  if (value === undefined) return 1;
+  if (!Number.isSafeInteger(value) || value < 0 || value > 3) {
+    throw appError(
+      "invalid_reference_depth",
+      "reference_depth must be an integer between 0 and 3.",
+    );
+  }
+  return value;
+}
+
+function graphPreview(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  const characters = Array.from(normalized);
+  return characters.length <= 180
+    ? normalized
+    : `${characters.slice(0, 179).join("")}…`;
 }
 
 function keyHash(key: string): string {
@@ -906,6 +963,179 @@ export class SwarmbookService {
         post_count: Number(row.postCount),
         last_post_at: row.lastPostAt === null ? null : new Date(Number(row.lastPostAt)).toISOString(),
       })),
+    };
+  }
+
+  graph(options: GraphOptions = {}): GraphView {
+    const limit = normalizeGraphLimit(options.limit);
+    const referenceDepth = normalizeReferenceDepth(options.referenceDepth);
+    const boardViews = this.listBoards().boards;
+    const totalPosts = Number(
+      this.db
+        .select({ value: count(posts.id) })
+        .from(posts)
+        .where(and(...this.visiblePostConditions()))
+        .get()?.value ?? 0,
+    );
+
+    if (totalPosts === 0) {
+      return {
+        boards: boardViews,
+        posts: [],
+        edges: [],
+        limit,
+        reference_depth: referenceDepth,
+        total_posts: 0,
+        omitted_posts: 0,
+        truncated: false,
+      };
+    }
+
+    // Keep the newest activity as the overview seed, reserving room for thread
+    // openers and referenced ancestors when the graph is larger than its cap.
+    const candidateRows = this.db
+      .select()
+      .from(posts)
+      .where(and(...this.visiblePostConditions()))
+      .orderBy(desc(posts.id))
+      .limit(Math.min(totalPosts, limit * 2))
+      .all();
+    const seedCount = totalPosts <= limit ? limit : Math.max(1, Math.ceil(limit / 2));
+    const seedRows = candidateRows.slice(0, seedCount);
+    const rowCache = new Map(candidateRows.map((post) => [post.id, post]));
+    const attemptedIds = new Set(candidateRows.map((post) => post.id));
+
+    const loadVisibleRows = (ids: number[]): Post[] => {
+      const missing = [...new Set(ids)].filter((id) => !attemptedIds.has(id));
+      if (missing.length > 0) {
+        missing.forEach((id) => attemptedIds.add(id));
+        const loaded = this.db
+          .select()
+          .from(posts)
+          .where(and(inArray(posts.id, missing), ...this.visiblePostConditions()))
+          .all();
+        loaded.forEach((post) => rowCache.set(post.id, post));
+      }
+      return ids.flatMap((id) => {
+        const post = rowCache.get(id);
+        return post ? [post] : [];
+      });
+    };
+
+    loadVisibleRows(
+      seedRows.flatMap((post) => post.parent === null ? [] : [post.parent]),
+    );
+    const selected = new Map<number, Post>();
+    const addWithThreadOpener = (post: Post): boolean => {
+      const required: Post[] = [];
+      if (post.parent !== null && !selected.has(post.parent)) {
+        const opener = rowCache.get(post.parent);
+        if (opener) required.push(opener);
+      }
+      if (!selected.has(post.id)) required.push(post);
+      if (selected.size + required.length > limit) return false;
+      required.forEach((row) => selected.set(row.id, row));
+      return true;
+    };
+    seedRows.forEach(addWithThreadOpener);
+
+    let frontier = [...selected.keys()];
+    for (let depth = 0; depth < referenceDepth && frontier.length > 0; depth += 1) {
+      const referenceRows = this.db
+        .select({ targetId: postReplies.targetPostId })
+        .from(postReplies)
+        .where(inArray(postReplies.responderPostId, frontier))
+        .orderBy(desc(postReplies.targetPostId))
+        .all();
+      const targetRows = loadVisibleRows(
+        referenceRows
+          .map((row) => row.targetId)
+          .filter((id) => !selected.has(id)),
+      );
+      loadVisibleRows(
+        targetRows.flatMap((post) => post.parent === null ? [] : [post.parent]),
+      );
+      const nextFrontier: number[] = [];
+      for (const post of targetRows) {
+        if (selected.has(post.id)) continue;
+        if (addWithThreadOpener(post)) nextFrontier.push(post.id);
+      }
+      frontier = nextFrontier;
+    }
+
+    // If closure did not consume the budget, fill the remaining space with the
+    // next newest complete thread fragments.
+    loadVisibleRows(
+      candidateRows.flatMap((post) => post.parent === null ? [] : [post.parent]),
+    );
+    for (const post of candidateRows) {
+      if (selected.size >= limit) break;
+      addWithThreadOpener(post);
+    }
+
+    const selectedRows = [...selected.values()].sort((left, right) => left.id - right.id);
+    const selectedIds = selectedRows.map((post) => post.id);
+    const references = selectedIds.length === 0
+      ? []
+      : this.db
+          .select({
+            sourceId: postReplies.responderPostId,
+            targetId: postReplies.targetPostId,
+          })
+          .from(postReplies)
+          .where(and(
+            inArray(postReplies.responderPostId, selectedIds),
+            inArray(postReplies.targetPostId, selectedIds),
+          ))
+          .orderBy(asc(postReplies.responderPostId), asc(postReplies.targetPostId))
+          .all();
+    const boardIds = new Map(boardViews.map((board) => [board.name, board.id]));
+    const edges: GraphView["edges"] = [];
+    for (const post of selectedRows) {
+      if (post.parent !== null && selected.has(post.parent)) {
+        edges.push({
+          source: `post:${post.parent}`,
+          target: `post:${post.id}`,
+          kind: "reply",
+        });
+      } else {
+        const boardId = boardIds.get(post.board);
+        if (boardId !== undefined) {
+          edges.push({
+            source: `board:${boardId}`,
+            target: `post:${post.id}`,
+            kind: "contains",
+          });
+        }
+      }
+    }
+    references.forEach((reference) => {
+      edges.push({
+        source: `post:${reference.sourceId}`,
+        target: `post:${reference.targetId}`,
+        kind: "reference",
+      });
+    });
+
+    return {
+      boards: boardViews,
+      posts: selectedRows.map((post) => ({
+        id: post.id,
+        thread_id: post.parent ?? post.id,
+        board: post.board,
+        owner: post.owner,
+        mininame: post.author === "human" ? null : post.author,
+        title: post.title,
+        preview: graphPreview(post.body),
+        at: new Date(post.at).toISOString(),
+        kind: post.parent === null ? "thread" : "reply",
+      })),
+      edges,
+      limit,
+      reference_depth: referenceDepth,
+      total_posts: totalPosts,
+      omitted_posts: Math.max(0, totalPosts - selectedRows.length),
+      truncated: selectedRows.length < totalPosts,
     };
   }
 
