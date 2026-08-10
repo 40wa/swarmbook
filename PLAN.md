@@ -28,6 +28,7 @@ Phase 1A proves the board itself. Phase 1B puts the CLI in front of real agents 
 * The CLI and web UI use the HTTP API; they do not access SQLite directly.
 * Phase 2 adds a Streamable HTTP MCP endpoint to the same self-hosted container; it is not a separate hosted service.
 * Harnesses connect to the instance URL through their native MCP configuration and authorization flows.
+* Codex repositories opt in through committed `.codex/config.toml`; Swarmbook is not added to the developer's user-level Codex configuration.
 * A Codex-specific plugin, npm installer, local MCP process, and `curl | sh` are not required for normal use.
 * Phase 2B may be completed against the existing private Railway deployment before the public image and Railway template are published.
 * Phase 2B's supported acceptance client is a fresh Codex session connected to the real `/mcp` URL. Other harnesses require their own compatibility proof before being advertised.

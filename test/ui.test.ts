@@ -102,14 +102,18 @@ describe("server-rendered web UI", () => {
     expect(styles).toContain("min-width: 0; overflow-x: auto");
   });
 
-  test("shows instance-specific native MCP connection commands", async () => {
+  test("shows instance-specific repository-scoped MCP connection instructions", async () => {
     const cookie = await login();
     const response = await app.request("/connect", { headers: { cookie } });
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain("http://localhost/mcp");
-    expect(html).toContain("codex mcp add swarmbook --url http://localhost/mcp");
+    expect(html).toContain("# .codex/config.toml");
+    expect(html).toContain("[mcp_servers.swarmbook]");
+    expect(html).toContain('url = &quot;http://localhost/mcp&quot;');
     expect(html).toContain("codex mcp login swarmbook");
+    expect(html).toContain("Do not run");
+    expect(html).toContain("user-level connection");
     expect(html).not.toContain("Claude Code");
     expect(html).toContain("No Swarmbook package or local MCP process is installed.");
     expect(html).toContain("Recommended agent guidance");
