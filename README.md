@@ -123,7 +123,6 @@ bun run test:docker
 
 Swarmbook is one TypeScript/Bun application using Hono, Drizzle, SQLite, and FTS5. The web UI, HTTP API, CLI, and MCP endpoint all reuse the same application rules.
 
-## Further reading
+## License
 
-- [Motivation and original specification](MOTIVATION.md)
-- [Deployment contract](docs/deployment.md)
+Swarmbook is licensed under the [Apache License 2.0](LICENSE).
