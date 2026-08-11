@@ -49,6 +49,8 @@ export function requestClientIp(
 export function isPublicAuthPost(method: string, path: string): boolean {
   if (method.toUpperCase() !== "POST") return false;
   return path === "/login" ||
+    path === "/setup" ||
+    /^\/invite\/[^/]+$/.test(path) ||
     path === "/authorize" ||
     path === "/token" ||
     path === "/register" ||

@@ -85,7 +85,10 @@ export const tokens = sqliteTable(
       .references(() => owners.id),
     handle: text("handle").notNull(),
     secretHash: text("secret_hash").notNull(),
+    recoverableSecret: text("recoverable_secret"),
     createdAt: integer("created_at").notNull(),
+    lastUsedAt: integer("last_used_at"),
+    revokedAt: integer("revoked_at"),
   },
   (table) => [
     uniqueIndex("tokens_owner_handle_unique").on(
@@ -97,6 +100,123 @@ export const tokens = sqliteTable(
       "tokens_handle_format",
       sql`length(${table.handle}) between 3 and 32 and ${table.handle} not glob '*[^a-z0-9-]*'`,
     ),
+  ],
+);
+
+export const authUsers = sqliteTable(
+  "auth_users",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    email: text("email").notNull(),
+    emailVerified: integer("email_verified", { mode: "boolean" })
+      .default(false)
+      .notNull(),
+    image: text("image"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+    username: text("username"),
+    displayUsername: text("display_username"),
+  },
+  (table) => [
+    uniqueIndex("auth_users_email_unique").on(table.email),
+    uniqueIndex("auth_users_username_unique").on(table.username),
+  ],
+);
+
+export const authSessions = sqliteTable(
+  "auth_sessions",
+  {
+    id: text("id").primaryKey(),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    token: text("token").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
+    userId: text("user_id")
+      .notNull()
+      .references(() => authUsers.id, { onDelete: "cascade" }),
+  },
+  (table) => [
+    uniqueIndex("auth_sessions_token_unique").on(table.token),
+    index("auth_sessions_user_idx").on(table.userId),
+  ],
+);
+
+export const authAccounts = sqliteTable(
+  "auth_accounts",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    providerId: text("provider_id").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => authUsers.id, { onDelete: "cascade" }),
+    accessToken: text("access_token"),
+    refreshToken: text("refresh_token"),
+    idToken: text("id_token"),
+    accessTokenExpiresAt: integer("access_token_expires_at", {
+      mode: "timestamp_ms",
+    }),
+    refreshTokenExpiresAt: integer("refresh_token_expires_at", {
+      mode: "timestamp_ms",
+    }),
+    scope: text("scope"),
+    password: text("password"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [index("auth_accounts_user_idx").on(table.userId)],
+);
+
+export const authVerifications = sqliteTable(
+  "auth_verifications",
+  {
+    id: text("id").primaryKey(),
+    identifier: text("identifier").notNull(),
+    value: text("value").notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [index("auth_verifications_identifier_idx").on(table.identifier)],
+);
+
+export const humanOwnerLinks = sqliteTable(
+  "human_owner_links",
+  {
+    authUserId: text("auth_user_id")
+      .primaryKey()
+      .references(() => authUsers.id, { onDelete: "cascade" }),
+    ownerId: integer("owner_id")
+      .notNull()
+      .references(() => owners.id),
+    createdAt: integer("created_at").notNull(),
+    onboardedAt: integer("onboarded_at"),
+  },
+  (table) => [uniqueIndex("human_owner_links_owner_unique").on(table.ownerId)],
+);
+
+export const humanInvites = sqliteTable(
+  "human_invites",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    tokenHash: text("token_hash").notNull(),
+    invitedByOwnerId: integer("invited_by_owner_id")
+      .notNull()
+      .references(() => owners.id),
+    createdAt: integer("created_at").notNull(),
+    expiresAt: integer("expires_at").notNull(),
+    consumedAt: integer("consumed_at"),
+    consumedByAuthUserId: text("consumed_by_auth_user_id").references(
+      () => authUsers.id,
+    ),
+    revokedAt: integer("revoked_at"),
+  },
+  (table) => [
+    uniqueIndex("human_invites_token_hash_unique").on(table.tokenHash),
+    index("human_invites_inviter_idx").on(table.invitedByOwnerId),
   ],
 );
 
@@ -167,5 +287,11 @@ export type Owner = typeof owners.$inferSelect;
 export type OwnerCredential = typeof ownerCredentials.$inferSelect;
 export type OAuthClient = typeof oauthClients.$inferSelect;
 export type Token = typeof tokens.$inferSelect;
+export type AuthUser = typeof authUsers.$inferSelect;
+export type AuthSession = typeof authSessions.$inferSelect;
+export type AuthAccount = typeof authAccounts.$inferSelect;
+export type AuthVerification = typeof authVerifications.$inferSelect;
+export type HumanOwnerLink = typeof humanOwnerLinks.$inferSelect;
+export type HumanInvite = typeof humanInvites.$inferSelect;
 export type Post = typeof posts.$inferSelect;
 export type PostReply = typeof postReplies.$inferSelect;

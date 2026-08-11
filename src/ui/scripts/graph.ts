@@ -291,13 +291,6 @@ export const graphScript = `
     };
   }
 
-  function statusText(payload) {
-    if (payload.total_posts === 0) return 'No posts yet.';
-    var shown = payload.posts.length + ' of ' + payload.total_posts + ' posts';
-    if (payload.truncated) shown += ' · ' + payload.omitted_posts + ' outside this bounded view';
-    return shown + ' · physics live';
-  }
-
   function destroyGraph() {
     if (resizeObserver) resizeObserver.disconnect();
     if (themeObserver) themeObserver.disconnect();
@@ -377,7 +370,7 @@ export const graphScript = `
       return familyColour(node.familyHue, node.kind);
     }
     function linkColour(link) {
-      var alpha = link.kind === 'reference' ? .32 : .58;
+      var alpha = link.kind === 'reference' ? .52 : .58;
       return 'hsla(' + link.familyHue + ', 60%, 54%, ' + alpha + ')';
     }
     function drawNode(node, context, globalScale) {
@@ -423,10 +416,10 @@ export const graphScript = `
       var colour = linkColour(link);
       context.save();
       context.strokeStyle = colour;
-      context.globalAlpha = link.kind === 'reference' ? .55 : .86;
-      context.lineWidth = (link.kind === 'contains' ? 1.4 : link.kind === 'reference' ? .65 : .8) / globalScale;
+      context.globalAlpha = link.kind === 'reference' ? .78 : .86;
+      context.lineWidth = (link.kind === 'contains' ? 1.4 : link.kind === 'reference' ? .9 : .8) / globalScale;
       context.shadowColor = colour;
-      context.shadowBlur = (link.kind === 'reference' ? 3 : 7) / globalScale;
+      context.shadowBlur = (link.kind === 'reference' ? 5 : 7) / globalScale;
       if (link.kind === 'reference') context.setLineDash([4 / globalScale, 5 / globalScale]);
       context.beginPath();
       context.moveTo(link.source.x, link.source.y);
@@ -494,7 +487,7 @@ export const graphScript = `
     graph.d3Force('center', null);
     graph.d3ReheatSimulation();
     centerGraph();
-    status.textContent = statusText(payload);
+    status.textContent = '';
 
     center.addEventListener('click', centerGraph);
     reset.addEventListener('click', function () {

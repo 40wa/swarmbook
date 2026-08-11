@@ -14,12 +14,14 @@ let database: DatabaseHandle;
 let service: SwarmbookService;
 let app: ReturnType<typeof createApp>;
 let ownerCredentialKeys: Map<string, string>;
+let browserCookies: Map<string, string>;
 
 beforeEach(() => {
   database = createDatabase(":memory:");
   service = new SwarmbookService(database.db);
   app = createApp(service, { requestLogger: false });
   ownerCredentialKeys = new Map();
+  browserCookies = new Map();
 });
 
 afterEach(() => database.close());
@@ -35,21 +37,42 @@ function agent(mininame: string, ownerName = "alex") {
 }
 
 async function login(owner = "alex"): Promise<string> {
-  const existing = ownerCredentialKeys.get(owner);
-  if (existing) return `swarmbook_owner_key=${existing}`;
-  const response = await app.request("/login", {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      owner,
-      access_key: "local-swarmbook",
-      next: "/",
-    }),
-  });
+  const existing = browserCookies.get(owner);
+  if (existing) return existing;
+  let response: Response;
+  if (!service.hasHumanAccounts()) {
+    response = await app.request("/setup", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        username: owner,
+        password: `password-${owner}`,
+        access_key: "local-swarmbook",
+        next: "/",
+      }),
+    });
+  } else {
+    const inviter = browserCookies.values().next().value as string;
+    const invitation = await app.request("/invites", {
+      method: "POST",
+      headers: {
+        cookie: inviter,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ username: owner }),
+    });
+    const token = (await invitation.text()).match(/swarmbook_invite_[A-Za-z0-9_-]+/)?.[0];
+    expect(token).toBeString();
+    response = await app.request(`/invite/${token}`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ username: owner, password: `password-${owner}` }),
+    });
+  }
   expect(response.status).toBe(302);
   const cookie = response.headers.get("set-cookie")?.split(";", 1)[0];
-  expect(cookie).toStartWith("swarmbook_owner_key=");
-  ownerCredentialKeys.set(owner, cookie!.slice("swarmbook_owner_key=".length));
+  expect(cookie).toContain("swarmbook.session_token=");
+  browserCookies.set(owner, cookie!);
   return cookie!;
 }
 
@@ -88,6 +111,11 @@ describe("server-rendered web UI", () => {
     expect(html).toContain('id="live-tail" class="live-tail"');
     expect(html).toContain('class="tail-close" aria-label="Close live posts"');
     expect(html).toContain('<details class="user-menu" data-noswap="1"><summary>alex</summary>');
+    expect(html).toContain('href="/quickstart">quickstart</a>');
+    expect(html).toContain('href="/users" class="menu-item">Users</a>');
+    expect(html).toContain('href="/keys" class="menu-item">Keys</a>');
+    expect(html).not.toContain('href="/keys">keys</a>');
+    expect(html).not.toContain('href="/threads/new">+thread</a>');
     expect(html).not.toContain('class="chev"');
     expect(navigationScript).toContain("document.addEventListener('click'");
     expect(navigationScript).toContain("main.replaceWith(nextMain)");
@@ -160,6 +188,10 @@ describe("server-rendered web UI", () => {
     expect(graphScript).toContain("nodeCanvasObjectMode(function () { return 'replace'; })");
     expect(graphScript).toContain("linkCanvasObjectMode(function () { return 'replace'; })");
     expect(graphScript).toContain("context.shadowBlur");
+    expect(graphScript).toContain("link.kind === 'reference' ? .52 : .58");
+    expect(graphScript).toContain("link.kind === 'reference' ? .9 : .8");
+    expect(graphScript).not.toContain("physics live");
+    expect(html).not.toContain("posts · physics live");
     expect(graphScript).toContain("fillText('/' + node.board + '/'");
     expect(graphScript).toContain("randomiseHierarchy(data)");
     expect(graphScript).toContain("var data = graphData(payload);\n    randomiseHierarchy(data);");
@@ -240,25 +272,31 @@ describe("server-rendered web UI", () => {
 
   test("shows instance-specific global and repository-scoped MCP connection instructions", async () => {
     const cookie = await login();
-    const response = await app.request("/connect", { headers: { cookie } });
+    const legacy = await app.request("/connect", { headers: { cookie } });
+    expect(legacy.status).toBe(302);
+    expect(legacy.headers.get("location")).toBe("/quickstart");
+    const response = await app.request("/quickstart?tab=agents&mode=repository", { headers: { cookie } });
     expect(response.status).toBe(200);
     const html = await response.text();
     expect(html).toContain("http://localhost/mcp");
-    expect(html).toContain("Option A: global");
-    expect(html).toContain("codex mcp add swarmbook --url http://localhost/mcp");
-    expect(html).toContain("Option B: repository-scoped (recommended)");
+    expect(html).toContain("Connect agents");
+    expect(html).toContain("Invite people");
+    expect(html).toContain("Repository-scoped");
     expect(html).toContain("# .codex/config.toml");
     expect(html).toContain("[mcp_servers.swarmbook]");
     expect(html).toContain('url = &quot;http://localhost/mcp&quot;');
     expect(html).toContain("codex mcp login swarmbook");
-    expect(html).toContain("adds nothing globally");
+    expect(html).toContain("Nothing global is added");
     expect(html).not.toContain("Claude Code");
-    expect(html).toContain("No Swarmbook package or local MCP process is installed.");
     expect(html).toContain("Recommended agent guidance");
     expect(html).toContain("## Agent coordination");
     expect(html).toContain("Use the Swarmbook MCP as the team");
     expect(html).toContain("private inter-agent bulletin board");
     expect(html).toContain("relevant codepaths or symbols");
+    const global = await (
+      await app.request("/quickstart?tab=agents&mode=global", { headers: { cookie } })
+    ).text();
+    expect(global).toContain("codex mcp add swarmbook --url http://localhost/mcp");
   });
 
   test("renders two-line board rows and edits board names and descriptions from the board menu", async () => {
@@ -475,11 +513,142 @@ describe("server-rendered web UI", () => {
     expect(pastEnd.headers.get("location")).toBe("/boards/meta?page=2");
   });
 
-  test("rejects a bad access key and clears the owner cookie on logout", async () => {
-    const bad = await app.request("/login", {
+  test("onboards invited humans and manages recoverable instance-wide agent keys", async () => {
+    const alexCookie = await login("alex");
+    const welcome = await (
+      await app.request("/welcome", { headers: { cookie: alexCookie } })
+    ).text();
+    expect(welcome).toContain("Welcome, alex");
+    expect(welcome).toContain("You are now on Swarmbook. Connect your agents and invite your team.");
+
+    const invitation = await app.request("/invites", {
+      method: "POST",
+      headers: {
+        cookie: alexCookie,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams(),
+    });
+    const invitationHtml = await invitation.text();
+    const token = invitationHtml.match(/swarmbook_invite_[A-Za-z0-9_-]+/)?.[0];
+    expect(token).toBeString();
+    expect(invitationHtml).toContain("Copy this invitation now");
+    expect(invitationHtml).toContain("The recipient chooses their username and password");
+    expect(
+      database.sqlite.query<{ token_hash: string }, []>("select token_hash from human_invites").get()?.token_hash,
+    ).not.toBe(token);
+    const acceptanceForm = await (await app.request(`/invite/${token}`)).text();
+    expect(acceptanceForm).toContain("lets you choose your username");
+    expect(acceptanceForm).toContain('name="username"');
+
+    const accepted = await app.request(`/invite/${token}`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ owner: "alex", access_key: "wrong", next: "/" }),
+      body: new URLSearchParams({ username: "casey", password: "casey-password" }),
+    });
+    expect(accepted.status).toBe(302);
+    expect(accepted.headers.get("location")).toBe("/welcome");
+    const caseyCookie = accepted.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const account = database.sqlite
+      .query<{ password: string }, []>(
+        "select password from auth_accounts where provider_id = 'credential'",
+      )
+      .all()
+      .find((row) => row.password !== null);
+    expect(account?.password).toBeString();
+    expect(account?.password).not.toBe("casey-password");
+
+    const minted = await app.request("/keys", {
+      method: "POST",
+      headers: {
+        cookie: caseyCookie,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ mininame: "cleanup-cron" }),
+    });
+    const mintedHtml = await minted.text();
+    const key = mintedHtml.match(/swarmbook_[A-Za-z0-9_-]{20,}/)?.[0];
+    expect(key).toBeString();
+    expect(mintedHtml).toContain("All keys");
+    expect(mintedHtml).toContain("<h2>Agent keys</h2>");
+    expect(mintedHtml).not.toContain("Keys for headless agents");
+    expect(
+      database.sqlite.query<{ recoverable_secret: string }, []>(
+        "select recoverable_secret from tokens join owners on owners.id = tokens.owner_id where owners.name = 'casey' and tokens.handle = 'cleanup-cron'",
+      ).get()?.recoverable_secret,
+    ).toBe(key);
+    const alexKeys = await (
+      await app.request("/keys", { headers: { cookie: alexCookie } })
+    ).text();
+    expect(alexKeys).toContain(key!);
+    expect(alexKeys).toContain("casey/cleanup-cron");
+    expect(service.authenticate(key!)).toMatchObject({
+      owner: "casey",
+      mininame: "cleanup-cron",
+    });
+    const keyId = database.sqlite.query<{ id: number }, []>(
+      "select tokens.id from tokens join owners on owners.id = tokens.owner_id where owners.name = 'casey' and tokens.handle = 'cleanup-cron'",
+    ).get()!.id;
+    await app.request(`/keys/${keyId}/revoke`, {
+      method: "POST",
+      headers: { cookie: alexCookie },
+    });
+    expect(() => service.authenticate(key!)).toThrow("invalid");
+    expect((await app.request(`/invite/${token}`)).status).toBe(410);
+  });
+
+  test("implicitly attaches an invited signup to an existing owner without a human login", async () => {
+    const existingIdentity = agent("historian", "existing-owner");
+    const existingOwnerId = database.sqlite.query<{ id: number }, []>(
+      "select id from owners where name = 'existing-owner'",
+    ).get()!.id;
+    const alexCookie = await login("alex");
+
+    const users = await (
+      await app.request("/users", { headers: { cookie: alexCookie } })
+    ).text();
+    expect(users).toContain("<h2>Users</h2>");
+    expect(users).toContain("Team");
+    expect(users).toContain("Invites");
+    expect(users).not.toContain("Legacy");
+    expect(users).not.toContain("existing-owner");
+
+    const invitation = await app.request("/invites", {
+      method: "POST",
+      headers: { cookie: alexCookie },
+    });
+    const token = (await invitation.text()).match(/swarmbook_invite_[A-Za-z0-9_-]+/)?.[0];
+    expect(token).toBeString();
+
+    const accepted = await app.request(`/invite/${token}`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ username: "existing-owner", password: "existing-password" }),
+    });
+    expect(accepted.status).toBe(302);
+    expect(
+      database.sqlite.query<{ owner_id: number }, []>(
+        "select owner_id from human_owner_links join auth_users on auth_users.id = human_owner_links.auth_user_id where auth_users.username = 'existing-owner'",
+      ).get()?.owner_id,
+    ).toBe(existingOwnerId);
+    expect(service.authenticate(database.sqlite.query<{ recoverable_secret: string }, [number]>(
+      "select recoverable_secret from tokens where id = ?",
+    ).get(existingIdentity.tokenId)!.recoverable_secret)).toMatchObject({
+      owner: "existing-owner",
+      mininame: "historian",
+    });
+  });
+
+  test("rejects a bad bootstrap key and clears the Better Auth session on logout", async () => {
+    const bad = await app.request("/setup", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        username: "alex",
+        password: "password-alex",
+        access_key: "wrong",
+        next: "/",
+      }),
     });
     expect(bad.status).toBe(401);
     expect(await bad.text()).toContain("server access key is invalid");
@@ -491,6 +660,7 @@ describe("server-rendered web UI", () => {
     });
     expect(logout.status).toBe(302);
     expect(logout.headers.get("location")).toBe("/login");
-    expect(logout.headers.get("set-cookie")).toContain("swarmbook_owner_key=");
+    expect(logout.headers.get("set-cookie")).toContain("swarmbook.session_token=");
+    expect(logout.headers.get("set-cookie")).toContain("Max-Age=0");
   });
 });

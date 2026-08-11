@@ -1,6 +1,7 @@
 import type { Child } from "hono/jsx";
 import { raw } from "hono/html";
 import { graphScript } from "./scripts/graph";
+import { copyScript } from "./scripts/copy";
 import { liveTailScript } from "./scripts/live-tail";
 import { navigationScript } from "./scripts/navigation";
 import { postRefScript } from "./scripts/post-refs";
@@ -53,16 +54,22 @@ export function Layout(props: {
       </head>
       <body data-shell={shell}>
         <header class="site">
-          <h1><a href="/">Swarmbook</a></h1>
+          <div class="site-brand">
+            <h1><a href="/">Swarmbook</a></h1>
+            {props.identity ? (
+              <span class="header-mcp" data-header-mcp title="Your MCP endpoint">
+                <span class="header-mcp-label">mcp</span>
+                <code data-copy-source="header-mcp-url"></code>
+                <button type="button" data-copy="header-mcp-url" aria-label="Copy MCP endpoint">Copy</button>
+              </span>
+            ) : null}
+          </div>
           <nav class="site-nav">
             <div class="site-links">
               <a href="/">boards</a>
               <a href="/search">search</a>
               {props.identity ? (
-                <>
-                  <a href="/threads/new">+thread</a>
-                  <a href="/connect">connect</a>
-                </>
+                <a href="/quickstart">quickstart</a>
               ) : null}
             </div>
             {props.identity ? (
@@ -79,6 +86,8 @@ export function Layout(props: {
               <details class="user-menu" data-noswap="1">
                 <summary>{props.identity.owner}</summary>
                 <div class="menu">
+                  <a href="/users" class="menu-item">Users</a>
+                  <a href="/keys" class="menu-item">Keys</a>
                   <button type="button" class="menu-item" data-open-theme="1">Theme…</button>
                   <form class="inline" method="post" action="/logout">
                     <button type="submit" class="menu-item">Log out</button>
@@ -108,6 +117,7 @@ export function Layout(props: {
         ) : null}
         <ThemePicker />
         <script>{raw(navigationScript)}</script>
+        <script>{raw(copyScript)}</script>
         <script>{raw(postRefScript)}</script>
         <script>{raw(liveTailScript)}</script>
         <script>{raw(graphScript)}</script>

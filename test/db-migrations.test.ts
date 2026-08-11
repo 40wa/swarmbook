@@ -56,6 +56,35 @@ describe("database migrations", () => {
         )
         .get(),
     ).toEqual({ name: "oauth_clients" });
+    for (const name of [
+      "auth_users",
+      "auth_sessions",
+      "auth_accounts",
+      "auth_verifications",
+      "human_owner_links",
+      "human_invites",
+    ]) {
+      expect(
+        handle.sqlite
+          .query<{ name: string }, [string]>(
+            "select name from sqlite_master where type = 'table' and name = ?",
+          )
+          .get(name),
+      ).toEqual({ name });
+    }
+    const tokenColumns = handle.sqlite
+      .query<{ name: string }, []>("pragma table_info(tokens)")
+      .all()
+      .map((column) => column.name);
+    expect(tokenColumns).toContain("last_used_at");
+    expect(tokenColumns).toContain("revoked_at");
+    expect(tokenColumns).toContain("recoverable_secret");
+    const inviteColumns = handle.sqlite
+      .query<{ name: string }, []>("pragma table_info(human_invites)")
+      .all()
+      .map((column) => column.name);
+    expect(inviteColumns).not.toContain("owner_name");
+    expect(inviteColumns).not.toContain("target_owner_id");
     expect(
       handle.sqlite
         .query<{ sql: string }, []>(
@@ -106,6 +135,123 @@ describe("database migrations", () => {
     ]);
     expect(reopened.accessKey).toBe(accessKey);
     reopened.close();
+  });
+
+  test("repairs the historical 0008 timestamp before applying later migrations", () => {
+    const directory = mkdtempSync(join(tmpdir(), "swarmbook-ordering-"));
+    temporaryDirectories.push(directory);
+    const path = join(directory, "swarmbook.sqlite");
+    const oldMigrations = join(directory, "old-migrations");
+    mkdirSync(join(oldMigrations, "meta"), { recursive: true });
+    const journal = JSON.parse(
+      readFileSync(resolve(import.meta.dir, "../drizzle/meta/_journal.json"), "utf8"),
+    );
+    journal.entries = journal.entries.slice(0, 10);
+    journal.entries[8].when = 1_786_500_000_000;
+    for (const entry of journal.entries) {
+      cpSync(
+        resolve(import.meta.dir, `../drizzle/${entry.tag}.sql`),
+        join(oldMigrations, `${entry.tag}.sql`),
+      );
+    }
+    writeFileSync(
+      join(oldMigrations, "meta/_journal.json"),
+      `${JSON.stringify(journal, null, 2)}\n`,
+    );
+
+    const old = createDatabase(path, { migrationsFolder: oldMigrations });
+    expect(
+      old.sqlite
+        .query<{ name: string; notnull: number }, []>("pragma table_info(human_invites)")
+        .all()
+        .find((column) => column.name === "owner_name")?.notnull,
+    ).toBe(1);
+    old.close();
+
+    const upgraded = createDatabase(path);
+    const inviteColumns = upgraded.sqlite
+      .query<{ name: string }, []>("pragma table_info(human_invites)")
+      .all()
+      .map((column) => column.name);
+    const tokenColumns = upgraded.sqlite
+      .query<{ name: string }, []>("pragma table_info(tokens)")
+      .all()
+      .map((column) => column.name);
+    expect(inviteColumns).not.toContain("owner_name");
+    expect(inviteColumns).not.toContain("target_owner_id");
+    expect(tokenColumns).toContain("recoverable_secret");
+    expect(
+      upgraded.sqlite
+        .query<{ created_at: number }, []>(
+          "select created_at from __drizzle_migrations where hash = '300f28ed92708ad5646d199f883894906d61d2f6c791205e997373c1d56a3ab2'",
+        )
+        .get()?.created_at,
+    ).toBe(1_786_400_000_001);
+    upgraded.close();
+  });
+
+  test("upgrades a database that already applied the superseded development auth migration", () => {
+    const directory = mkdtempSync(join(tmpdir(), "swarmbook-auth-upgrade-"));
+    temporaryDirectories.push(directory);
+    const path = join(directory, "swarmbook.sqlite");
+    const oldMigrations = join(directory, "old-migrations");
+    mkdirSync(join(oldMigrations, "meta"), { recursive: true });
+    const journal = JSON.parse(
+      readFileSync(resolve(import.meta.dir, "../drizzle/meta/_journal.json"), "utf8"),
+    );
+    journal.entries = journal.entries.slice(0, 11);
+    for (const entry of journal.entries) {
+      cpSync(
+        resolve(import.meta.dir, `../drizzle/${entry.tag}.sql`),
+        join(oldMigrations, `${entry.tag}.sql`),
+      );
+    }
+    writeFileSync(
+      join(oldMigrations, "meta/_journal.json"),
+      `${JSON.stringify(journal, null, 2)}\n`,
+    );
+
+    const old = createDatabase(path, { migrationsFolder: oldMigrations });
+    const oldInviteColumns = old.sqlite
+      .query<{ name: string; notnull: number }, []>("pragma table_info(human_invites)")
+      .all();
+    expect(oldInviteColumns.find((column) => column.name === "owner_name")?.notnull).toBe(1);
+    expect(oldInviteColumns.map((column) => column.name)).toContain("target_owner_id");
+    expect(
+      old.sqlite
+        .query<{ name: string }, []>("pragma table_info(tokens)")
+        .all()
+        .map((column) => column.name),
+    ).toContain("recoverable_secret");
+    old.sqlite
+      .prepare("update __drizzle_migrations set hash = ? where created_at = ?")
+      .run(
+        "46fc952f0a4be6f21ab974be64d40f1a03010f72275082e0e02b528f6ffd7220",
+        1_786_446_814_994,
+      );
+    old.close();
+
+    const upgraded = createDatabase(path);
+    const upgradedInviteColumns = upgraded.sqlite
+      .query<{ name: string }, []>("pragma table_info(human_invites)")
+      .all()
+      .map((column) => column.name);
+    expect(upgradedInviteColumns).not.toContain("owner_name");
+    expect(upgradedInviteColumns).not.toContain("target_owner_id");
+    expect(
+      upgraded.sqlite
+        .query<{ name: string }, []>("pragma table_info(tokens)")
+        .all()
+        .map((column) => column.name),
+    ).toContain("recoverable_secret");
+    expect(
+      upgraded.sqlite
+        .query<{ created_at: number }, []>(
+          "select created_at from __drizzle_migrations order by created_at desc limit 1",
+        )
+        .get()?.created_at,
+    ).toBe(1_786_449_128_054);
+    upgraded.close();
   });
 
   test("preserves posts and FTS while removing the successor column", () => {

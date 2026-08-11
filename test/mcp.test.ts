@@ -46,7 +46,18 @@ function toolText(result: unknown): string {
   return content[0]!.text;
 }
 
+async function bootstrapHuman(owner = "alex"): Promise<string> {
+  const response = await form("/setup", {
+    username: owner,
+    password: `password-${owner}`,
+    access_key: "local-swarmbook",
+  });
+  expect(response.status).toBe(302);
+  return cookieFrom(response);
+}
+
 async function oauthOwnerToken(owner = "alex"): Promise<string> {
+  const cookie = await bootstrapHuman(owner);
   const registered = await app.request("/register", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -73,16 +84,16 @@ async function oauthOwnerToken(owner = "alex"): Promise<string> {
     scope: "mcp:tools",
   }).toString();
 
-  const page = await app.request(authorize.pathname + authorize.search);
+  const page = await app.request(authorize.pathname + authorize.search, {
+    headers: { cookie },
+  });
   expect(page.status).toBe(200);
   const requestId = (await page.text()).match(/name="request_id" value="([^"]+)"/)?.[1];
   expect(requestId).toBeString();
 
   const approved = await form("/authorize", {
     request_id: requestId!,
-    owner,
-    access_key: "local-swarmbook",
-  });
+  }, { cookie });
   expect(approved.status).toBe(302);
   const callback = new URL(approved.headers.get("location")!);
   expect(callback.searchParams.get("state")).toBe("test-state");
@@ -130,9 +141,7 @@ describe("MCP OAuth", () => {
   });
 
   test("authorizes once in the browser and reuses the browser owner", async () => {
-    const login = await form("/login", { owner: "alex", access_key: "local-swarmbook" });
-    expect(login.status).toBe(302);
-    const cookie = cookieFrom(login);
+    const cookie = await bootstrapHuman();
 
     const registered = await app.request("/register", {
       method: "POST",
@@ -165,6 +174,7 @@ describe("MCP OAuth", () => {
   });
 
   test("rejects unregistered redirects, bad PKCE, and reused codes", async () => {
+    const cookie = await bootstrapHuman();
     const registered = await app.request("/register", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -187,6 +197,7 @@ describe("MCP OAuth", () => {
         ...base,
         redirect_uri: "http://127.0.0.1:9999/callback",
       })}`,
+      { headers: { cookie } },
     );
     expect(wrongRedirect.status).toBe(400);
     expect(await wrongRedirect.text()).toContain("invalid_redirect_uri");
@@ -196,13 +207,12 @@ describe("MCP OAuth", () => {
         ...base,
         redirect_uri: "http://127.0.0.1:3210/callback",
       })}`,
+      { headers: { cookie } },
     );
     const requestId = (await page.text()).match(/name="request_id" value="([^"]+)"/)?.[1];
     const approved = await form("/authorize", {
       request_id: requestId!,
-      owner: "alex",
-      access_key: "local-swarmbook",
-    });
+    }, { cookie });
     const code = new URL(approved.headers.get("location")!).searchParams.get("code")!;
     const tokenInput = {
       grant_type: "authorization_code",
@@ -228,6 +238,7 @@ describe("MCP OAuth", () => {
   });
 
   test("persists registered clients across application restarts", async () => {
+    const cookie = await bootstrapHuman();
     const registered = await app.request("/register", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -247,7 +258,9 @@ describe("MCP OAuth", () => {
       code_challenge_method: "S256",
       resource: "http://localhost/mcp",
     });
-    expect((await restarted.request(`/authorize?${query}`)).status).toBe(200);
+    expect((await restarted.request(`/authorize?${query}`, {
+      headers: { cookie },
+    })).status).toBe(200);
   });
 });
 

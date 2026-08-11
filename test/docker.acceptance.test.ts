@@ -67,6 +67,7 @@ async function browserAuth(
   baseUrl: string,
   owner: string,
   accessKey: string,
+  inviterCookie?: string,
 ): Promise<CommandResult & { json?: Record<string, any>; cookie?: string }> {
   const child = Bun.spawn({
     cmd: [bun, "src/cli/main.ts", "auth", "--server", baseUrl, "--no-open"],
@@ -88,10 +89,43 @@ async function browserAuth(
     verificationUrl = stderr.match(/https?:\/\/[^\s]+\/auth\/cli\/[^\s]+/)?.[0];
   }
   if (!verificationUrl) throw new Error(`CLI did not print an authorization URL: ${stderr}`);
+  let enrollment: Response;
+  if (inviterCookie) {
+    const invitation = await fetch(`${baseUrl}/invites`, {
+      method: "POST",
+      headers: {
+        cookie: inviterCookie,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ username: owner }),
+    });
+    const token = (await invitation.text()).match(/swarmbook_invite_[A-Za-z0-9_-]+/)?.[0];
+    if (!token) throw new Error("Invitation did not return its one-time token.");
+    enrollment = await fetch(`${baseUrl}/invite/${token}`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ username: owner, password: `password-${owner}` }),
+      redirect: "manual",
+    });
+  } else {
+    enrollment = await fetch(`${baseUrl}/setup`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        username: owner,
+        password: `password-${owner}`,
+        access_key: accessKey,
+      }),
+      redirect: "manual",
+    });
+  }
+  if (enrollment.status !== 302) {
+    throw new Error(`Browser enrollment failed: ${enrollment.status}`);
+  }
+  const cookie = enrollment.headers.get("set-cookie")?.split(";", 1)[0];
   const completion = await fetch(verificationUrl, {
     method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ owner, access_key: accessKey }),
+    headers: { cookie: cookie! },
   });
   if (!completion.ok) throw new Error(`Browser authorization failed: ${completion.status}`);
   while (true) {
@@ -106,7 +140,7 @@ async function browserAuth(
     stderr,
     exitCode,
     json: stdout ? (decodeApiToon(stdout) as Record<string, any>) : undefined,
-    cookie: completion.headers.get("set-cookie")?.split(";", 1)[0],
+    cookie,
   };
 }
 
@@ -175,7 +209,7 @@ describe("Docker acceptance", () => {
         const amberAuth = await browserAuth(amberHome, firstUrl, "alex", accessKey);
         expect(amberAuth).toMatchObject({ exitCode: 0 });
         expect(
-          await browserAuth(cobaltHome, firstUrl, "casey", accessKey),
+          await browserAuth(cobaltHome, firstUrl, "casey", accessKey, amberAuth.cookie),
         ).toMatchObject({ exitCode: 0 });
         expect(
           await cli(amberHome, ["identity", "set", "amber-ant"]),
@@ -267,19 +301,37 @@ describe("Docker acceptance", () => {
         const secondUrl = await publishedUrl(secondContainer);
         await waitForHealth(secondUrl, secondContainer);
 
-        const oldAccess = await fetch(`${secondUrl}/login`, {
+        const oldAccess = await fetch(`${secondUrl}/setup`, {
           method: "POST",
           headers: { "content-type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({ owner: "new-owner", access_key: accessKey }),
+          body: new URLSearchParams({
+            username: "new-owner",
+            password: "password-new-owner",
+            access_key: accessKey,
+          }),
         });
         expect(oldAccess.status).toBe(401);
-        const newAccess = await fetch(`${secondUrl}/login`, {
+        const newAccess = await fetch(`${secondUrl}/setup`, {
           method: "POST",
           headers: { "content-type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({ owner: "new-owner", access_key: rotatedAccessKey }),
+          body: new URLSearchParams({
+            username: "new-owner",
+            password: "password-new-owner",
+            access_key: rotatedAccessKey,
+          }),
+        });
+        expect(newAccess.status).toBe(409);
+        const relogin = await fetch(`${secondUrl}/login`, {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            username: "alex",
+            password: "password-alex",
+          }),
           redirect: "manual",
         });
-        expect(newAccess.status).toBe(302);
+        expect(relogin.status).toBe(302);
+        const restartedCookie = relogin.headers.get("set-cookie")!.split(";", 1)[0]!;
 
         const amberConfig = JSON.parse(
           await Bun.file(join(amberHome, ".swarmbook", "config.json")).text(),
@@ -328,7 +380,7 @@ describe("Docker acceptance", () => {
         expect(
           await (
             await fetch(`${secondUrl}/boards/til`, {
-              headers: { cookie: amberAuth.cookie! },
+              headers: { cookie: restartedCookie },
             })
           ).text(),
         ).toContain("Docker persistence");

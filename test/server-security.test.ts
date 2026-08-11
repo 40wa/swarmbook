@@ -46,6 +46,24 @@ async function toon(response: Response): Promise<Record<string, any>> {
   return decodeApiToon(await response.text()) as Record<string, any>;
 }
 
+async function bootstrap(
+  app: ReturnType<typeof createApp>,
+  headers: Record<string, string> = proxyHeaders(),
+): Promise<Response> {
+  return app.request("/setup", {
+    method: "POST",
+    headers: {
+      ...headers,
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      username: "alex",
+      password: "password-alex",
+      access_key: "deployment-access-key",
+    }),
+  });
+}
+
 describe("internet-facing server boundary", () => {
   test("constructs public authorization URLs and secure owner cookies", async () => {
     const app = productionApp();
@@ -58,20 +76,18 @@ describe("internet-facing server boundary", () => {
       `https://swarmbook-production.up.railway.app/auth/cli/${started.request_id}`,
     );
 
+    const setup = await bootstrap(app);
+    const cookie = setup.headers.get("set-cookie")!.split(";", 1)[0]!;
     const completed = await app.request(`/auth/cli/${started.request_id}`, {
       method: "POST",
       headers: {
         ...proxyHeaders(),
-        "content-type": "application/x-www-form-urlencoded",
+        cookie,
       },
-      body: new URLSearchParams({
-        owner: "alex",
-        access_key: "deployment-access-key",
-      }),
     });
     expect(completed.status).toBe(200);
-    expect(completed.headers.get("set-cookie")).toContain("HttpOnly");
-    expect(completed.headers.get("set-cookie")).toContain("Secure");
+    expect(setup.headers.get("set-cookie")).toContain("HttpOnly");
+    expect(setup.headers.get("set-cookie")).toContain("Secure");
     expect(completed.headers.get("cache-control")).toBe("no-store");
     expect(completed.headers.get("x-content-type-options")).toBe("nosniff");
     expect(completed.headers.get("x-frame-options")).toBe("DENY");
@@ -107,6 +123,8 @@ describe("internet-facing server boundary", () => {
 
   test("accepts a matching Origin even when the proxy classifies it as same-site", async () => {
     const app = productionApp();
+    const setup = await bootstrap(app);
+    const cookie = setup.headers.get("set-cookie")!.split(";", 1)[0]!;
     const started = await toon(
       await app.request("/api/auth/requests", {
         method: "POST",
@@ -118,34 +136,22 @@ describe("internet-facing server boundary", () => {
       headers: {
         ...proxyHeaders(),
         "sec-fetch-site": "same-site",
-        "content-type": "application/x-www-form-urlencoded",
+        cookie,
       },
-      body: new URLSearchParams({
-        owner: "alex",
-        access_key: "deployment-access-key",
-      }),
     });
     expect(response.status).toBe(200);
   });
 
   test("falls back to Fetch Metadata when Chrome sends a null Origin", async () => {
     const app = productionApp();
-    const accepted = await app.request("/login", {
-      method: "POST",
-      headers: {
-        ...proxyHeaders(),
-        origin: "null",
-        "sec-fetch-site": "same-origin",
-        "content-type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({
-        owner: "alex",
-        access_key: "deployment-access-key",
-      }),
+    const accepted = await bootstrap(app, {
+      ...proxyHeaders(),
+      origin: "null",
+      "sec-fetch-site": "same-origin",
     });
     expect(accepted.status).toBe(302);
 
-    const rejected = await app.request("/login", {
+    const rejected = await app.request("/setup", {
       method: "POST",
       headers: {
         ...proxyHeaders("203.0.113.11"),
@@ -154,7 +160,8 @@ describe("internet-facing server boundary", () => {
         "content-type": "application/x-www-form-urlencoded",
       },
       body: new URLSearchParams({
-        owner: "mallory",
+        username: "mallory",
+        password: "password-mallory",
         access_key: "deployment-access-key",
       }),
     });
@@ -171,13 +178,17 @@ describe("internet-facing server boundary", () => {
       }),
     ).toHaveProperty("status", 201);
     expect(
-      await app.request("/login", {
+      await app.request("/setup", {
         method: "POST",
         headers: {
           ...proxyHeaders(),
           "content-type": "application/x-www-form-urlencoded",
         },
-        body: new URLSearchParams({ owner: "alex", access_key: "wrong" }),
+        body: new URLSearchParams({
+          username: "alex",
+          password: "password-alex",
+          access_key: "wrong",
+        }),
       }),
     ).toHaveProperty("status", 401);
 

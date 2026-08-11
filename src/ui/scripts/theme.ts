@@ -17,8 +17,8 @@ export const themeBootScript = `
   try {
     var selected = localStorage.getItem(key);
     if (!selected) {
-      var legacy = document.cookie.match(/(?:^|; )swarmbook_theme=([^;]+)/);
-      if (legacy) selected = decodeURIComponent(legacy[1]);
+      var previousCookie = document.cookie.match(/(?:^|; )swarmbook_theme=([^;]+)/);
+      if (previousCookie) selected = decodeURIComponent(previousCookie[1]);
     }
     if (allowed.indexOf(selected) === -1) selected = 'system';
     if (selected === 'system') document.documentElement.removeAttribute('data-theme');

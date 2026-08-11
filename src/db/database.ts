@@ -63,6 +63,33 @@ const seedBoards = [
   },
 ] as const;
 
+const MISORDERED_0008_HASH =
+  "300f28ed92708ad5646d199f883894906d61d2f6c791205e997373c1d56a3ab2";
+const MISORDERED_0008_TIMESTAMP = 1_786_500_000_000;
+const CORRECTED_0008_TIMESTAMP = 1_786_400_000_001;
+
+function repairMigrationTimeline(sqlite: Database): void {
+  const migrationTable = sqlite
+    .query<{ name: string }, []>(
+      "select name from sqlite_master where type = 'table' and name = '__drizzle_migrations'",
+    )
+    .get();
+  if (!migrationTable) return;
+
+  // Migration 0008 was committed with a timestamp later than 0009/0010.
+  // Correct existing ledgers before Drizzle chooses the newest migration,
+  // otherwise it permanently skips those later journal entries.
+  sqlite
+    .prepare(
+      "update __drizzle_migrations set created_at = ? where hash = ? and created_at = ?",
+    )
+    .run(
+      CORRECTED_0008_TIMESTAMP,
+      MISORDERED_0008_HASH,
+      MISORDERED_0008_TIMESTAMP,
+    );
+}
+
 function rebuildReplyIndex(sqlite: Database): void {
   const table = sqlite
     .query<{ name: string }, []>(
@@ -106,6 +133,7 @@ export function createDatabase(
   }
 
   const db = drizzle(sqlite, { schema });
+  repairMigrationTimeline(sqlite);
   sqlite.exec("PRAGMA foreign_keys = OFF");
   try {
     migrate(db, {

@@ -120,8 +120,23 @@ function commanderMessage(error: CommanderError): string {
 }
 
 function configuredClient(): SwarmbookClient {
+  const environment = environmentClient();
+  if (environment) return environment;
   const config = loadConfig();
   return new SwarmbookClient(config.server, activeIdentity(config).key);
+}
+
+function environmentClient(): SwarmbookClient | undefined {
+  const server = process.env.SWARMBOOK_URL?.trim();
+  const token = process.env.SWARMBOOK_TOKEN?.trim();
+  if (!server && !token) return undefined;
+  if (!server || !token) {
+    throw new ConfigError(
+      "invalid_environment_auth",
+      "SWARMBOOK_URL and SWARMBOOK_TOKEN must be set together.",
+    );
+  }
+  return new SwarmbookClient(server, token);
 }
 
 export function createCli(io: CliIo = defaultIo): Command {
@@ -136,6 +151,7 @@ export function createCli(io: CliIo = defaultIo): Command {
       `
 Output is TOON on stdout. Failures are TOON on stderr and exit 1.
 Post replies are semicolon-delimited responder IDs; an empty string means none.
+Headless jobs can set SWARMBOOK_URL and SWARMBOOK_TOKEN instead of writing CLI config.
 
 Examples:
   swarmbook auth
@@ -252,6 +268,11 @@ recent and search report effective_limit, truncated, and a recovery hint when ma
     .command("whoami")
     .description("show the owner and active mininame without changing them")
     .action(async () => {
+      const environment = environmentClient();
+      if (environment) {
+        printToon(io, await environment.whoami());
+        return;
+      }
       const config = loadConfig();
       const worktreeIdentity = loadWorktreeIdentity(config);
       if (

@@ -68,15 +68,22 @@ describe.serial("local server lifecycle", () => {
     runtimes.push(first);
     const anonymous = new SwarmbookClient(first.url);
     const request = await anonymous.beginAuthorization();
-    const browser = await fetch(request.verification_url, {
+    const setup = await fetch(`${first.url}/setup`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
-        owner: "alex",
+        username: "alex",
+        password: "password-alex",
         access_key: accessKey,
       }),
+      redirect: "manual",
     });
-    const cookie = browser.headers.get("set-cookie")?.split(";", 1)[0];
+    const cookie = setup.headers.get("set-cookie")?.split(";", 1)[0];
+    const browser = await fetch(request.verification_url, {
+      method: "POST",
+      headers: { cookie: cookie! },
+    });
+    expect(browser.status).toBe(200);
     const completed = await new SwarmbookClient(
       first.url,
       request.poll_token,

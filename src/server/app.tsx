@@ -1,6 +1,6 @@
 import { zValidator } from "@hono/zod-validator";
+import { isAPIError } from "better-auth/api";
 import { Hono, type Context } from "hono";
-import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { HTTPException } from "hono/http-exception";
 import { bodyLimit } from "hono/body-limit";
 import { secureHeaders } from "hono/secure-headers";
@@ -22,14 +22,17 @@ import {
   BoardPage,
   AuthorizationPage,
   AuthorizationCompletePage,
-  ConnectPage,
   ErrorPage,
   HomePage,
+  InviteAcceptancePage,
+  KeysPage,
   LoginPage,
   McpAuthorizationPage,
   NewThreadPage,
+  QuickstartPage,
   SearchPage,
   ThreadPage,
+  UsersPage,
 } from "../ui/views";
 import {
   encodeApiToon,
@@ -45,11 +48,13 @@ import {
   type PublicAuthRateLimitOptions,
   requestClientIp,
 } from "./security";
+import { createHumanAuth, localAuthEmail } from "./auth";
 
 type Environment = {
   Variables: {
     identity: Identity;
     ownerIdentity: OwnerIdentity;
+    authUserId: string;
     mcpRedirectOrigin: string;
   };
 };
@@ -158,24 +163,15 @@ function filterInput(
   };
 }
 
-function browserOwner(
-  context: Context<Environment>,
-  service: SwarmbookService,
-): OwnerIdentity | undefined {
-  const key = getCookie(context, "swarmbook_owner_key");
-  if (!key) return undefined;
-  try {
-    return service.authenticateOwner(key);
-  } catch {
-    return undefined;
-  }
+function browserOwner(context: Context<Environment>): OwnerIdentity | undefined {
+  return context.get("ownerIdentity") as OwnerIdentity | undefined;
 }
 
 function requireBrowserOwner(
   context: Context<Environment>,
   service: SwarmbookService,
 ): OwnerIdentity {
-  const identity = context.get("ownerIdentity") ?? browserOwner(context, service);
+  const identity = context.get("ownerIdentity") ?? browserOwner(context);
   if (!identity) {
     throw appError(
       "browser_authentication_required",
@@ -186,18 +182,40 @@ function requireBrowserOwner(
   return identity;
 }
 
-function setOwnerCookie(
+function requireAuthUserId(context: Context<Environment>): string {
+  const authUserId = context.get("authUserId");
+  if (!authUserId) {
+    throw appError("browser_authentication_required", "Sign in to continue.", 401);
+  }
+  return authUserId;
+}
+
+function appendAuthCookies(
   context: Context<Environment>,
-  key: string,
-  origin: string,
+  headers: Headers,
 ): void {
-  setCookie(context, "swarmbook_owner_key", key, {
-    httpOnly: true,
-    sameSite: "Lax",
-    path: "/",
-    maxAge: 60 * 60 * 24 * 365,
-    secure: new URL(origin).protocol === "https:",
-  });
+  for (const cookie of headers.getSetCookie()) {
+    context.header("Set-Cookie", cookie, { append: true });
+  }
+}
+
+function authErrorMessage(error: unknown): string {
+  if (isAPIError(error)) return error.message;
+  if (error instanceof AppError) return error.message;
+  return "Authentication could not be completed.";
+}
+
+function authErrorStatus(error: unknown): ContentfulStatusCode {
+  if (error instanceof AppError) return error.status as ContentfulStatusCode;
+  if (isAPIError(error)) {
+    const status = Number(error.statusCode);
+    if (status >= 400 && status <= 599) return status as ContentfulStatusCode;
+  }
+  return 400;
+}
+
+function accessLogPath(path: string): string {
+  return path.startsWith("/invite/") ? "/invite/[redacted]" : path;
 }
 
 function safeNext(value: string | undefined): string {
@@ -254,6 +272,11 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
     publicUrl: options.publicUrl,
     trustProxy: options.trustProxy ?? false,
   };
+  const authBaseURL = options.publicUrl ?? "http://localhost";
+  const humanAuth = createHumanAuth(service.db, {
+    baseURL: authBaseURL,
+    secret: service.authSecret,
+  });
   const publicAuthRateLimit = options.publicAuthRateLimit === false
     ? undefined
     : new PublicAuthRateLimiter(
@@ -311,6 +334,23 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
   });
 
   app.use("*", async (context, next) => {
+    const cookie = context.req.header("cookie") ?? "";
+    if (cookie.includes("swarmbook.session_token")) {
+      const session = await humanAuth.api.getSession({
+        headers: context.req.raw.headers,
+      });
+      if (session) {
+        const owner = service.ownerForAuthUser(session.user.id);
+        if (owner) {
+          context.set("authUserId", session.user.id);
+          context.set("ownerIdentity", owner);
+        }
+      }
+    }
+    await next();
+  });
+
+  app.use("*", async (context, next) => {
     const startedAt = performance.now();
     try {
       await next();
@@ -320,12 +360,12 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
           context.get("identity") as Identity | undefined;
         const ownerIdentity =
           (context.get("ownerIdentity") as OwnerIdentity | undefined) ??
-          browserOwner(context, service);
+          browserOwner(context);
         requestLogger({
           event: "http_request",
           at: new Date().toISOString(),
           method: context.req.method,
-          path: context.req.path,
+          path: accessLogPath(context.req.path),
           status: context.res.status,
           duration_ms: Math.max(
             0,
@@ -396,6 +436,8 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
       path.startsWith("/assets/") ||
       path.startsWith("/api/") ||
       path === "/login" ||
+      path === "/setup" ||
+      path.startsWith("/invite/") ||
       path.startsWith("/auth/cli/") ||
       path === "/mcp" ||
       path === "/authorize" ||
@@ -406,7 +448,7 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
       await next();
       return;
     }
-    const ownerIdentity = browserOwner(context, service);
+    const ownerIdentity = browserOwner(context);
     if (!ownerIdentity) {
       const nextPath = `${path}${new URL(context.req.url).search}`;
       return context.redirect(`/login?next=${encodeURIComponent(nextPath)}`);
@@ -443,17 +485,21 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
   });
 
   app.get("/authorize", (context) => {
+    const owner = browserOwner(context);
+    if (!owner) {
+      const next = `${context.req.path}${new URL(context.req.url).search}`;
+      return context.redirect(`/login?next=${encodeURIComponent(next)}`);
+    }
     const prompt = oauth.beginAuthorization(
       new URL(context.req.url),
       externalOrigin(context.req.raw, requestOriginOptions),
     );
     context.set("mcpRedirectOrigin", prompt.redirectOrigin);
-    const owner = browserOwner(context, service);
     return context.html(
       <McpAuthorizationPage
         requestId={prompt.requestId}
         clientName={prompt.clientName}
-        owner={owner?.owner}
+        owner={owner.owner}
       />,
     );
   });
@@ -462,19 +508,7 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
     const body = await context.req.parseBody();
     const requestId = formString(body, "request_id");
     try {
-      let owner = browserOwner(context, service);
-      if (!owner) {
-        const credential = service.issueOwnerCredential(
-          formString(body, "access_key"),
-          formString(body, "owner"),
-        );
-        setOwnerCookie(
-          context,
-          credential.key,
-          externalOrigin(context.req.raw, requestOriginOptions),
-        );
-        owner = service.authenticateOwner(credential.key);
-      }
+      const owner = requireBrowserOwner(context, service);
       return context.redirect(oauth.approveAuthorization(requestId, owner));
     } catch (error) {
       if (error instanceof AppError) {
@@ -485,7 +519,7 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
         return context.html(
           <McpAuthorizationPage
             requestId={requestId}
-            owner={browserOwner(context, service)?.owner}
+            owner={requireBrowserOwner(context, service).owner}
             message={error.message}
           />,
           error.status as ContentfulStatusCode,
@@ -703,27 +737,103 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
   );
   app.route("/api", api);
 
-  app.get("/login", (context) =>
-    context.html(<LoginPage next={safeNext(context.req.query("next"))} />),
-  );
+  app.get("/login", (context) => {
+    const next = safeNext(context.req.query("next"));
+    if (browserOwner(context)) return context.redirect(next);
+    return context.html(
+      <LoginPage next={next} needsSetup={!service.hasHumanAccounts()} />,
+    );
+  });
   app.post("/login", async (context) => {
     const body = await context.req.parseBody();
     const next = safeNext(formString(body, "next"));
     try {
-      const credential = service.issueOwnerCredential(
+      const signedIn = await humanAuth.api.signInUsername({
+        body: {
+          username: formString(body, "username"),
+          password: formString(body, "password"),
+        },
+        headers: context.req.raw.headers,
+        returnHeaders: true,
+      });
+      if (!service.ownerForAuthUser(signedIn.response.user.id)) {
+        throw appError("unlinked_login", "This login is not linked to a Swarmbook owner.", 403);
+      }
+      appendAuthCookies(context, signedIn.headers);
+      return context.redirect(
+        next === "/" && !service.isHumanOnboarded(signedIn.response.user.id)
+          ? "/welcome"
+          : next,
+      );
+    } catch (error) {
+      return context.html(
+        <LoginPage
+          next={next}
+          needsSetup={!service.hasHumanAccounts()}
+          message={authErrorMessage(error)}
+        />,
+        authErrorStatus(error),
+      );
+    }
+  });
+
+  app.post("/setup", async (context) => {
+    const body = await context.req.parseBody();
+    const next = safeNext(formString(body, "next"));
+    const username = formString(body, "username").trim().toLowerCase();
+    let authUserId: string | undefined;
+    try {
+      service.assertHumanBootstrapAvailable(
         formString(body, "access_key"),
-        formString(body, "owner"),
+        username,
       );
-      setOwnerCookie(
-        context,
-        credential.key,
-        externalOrigin(context.req.raw, requestOriginOptions),
+      const signedUp = await humanAuth.api.signUpEmail({
+        body: {
+          email: localAuthEmail(username),
+          name: username,
+          username,
+          displayUsername: username,
+          password: formString(body, "password"),
+        },
+        headers: context.req.raw.headers,
+        returnHeaders: true,
+      });
+      authUserId = signedUp.response.user.id;
+      service.completeHumanBootstrap(
+        formString(body, "access_key"),
+        username,
+        authUserId,
       );
-      return context.redirect(next);
+      appendAuthCookies(context, signedUp.headers);
+      return context.redirect(next === "/" ? "/welcome" : next);
+    } catch (error) {
+      if (authUserId) service.discardUnlinkedAuthUser(authUserId);
+      return context.html(
+        <LoginPage
+          next={next}
+          needsSetup={!service.hasHumanAccounts()}
+          message={authErrorMessage(error)}
+        />,
+        authErrorStatus(error),
+      );
+    }
+  });
+
+  app.get("/invite/:token", (context) => {
+    if (browserOwner(context)) return context.redirect("/quickstart?tab=people");
+    try {
+      const token = context.req.param("token");
+      const invite = service.inspectHumanInvite(token);
+      return context.html(
+        <InviteAcceptancePage
+          token={token}
+          expiresAt={invite.expires_at}
+        />,
+      );
     } catch (error) {
       if (error instanceof AppError) {
         return context.html(
-          <LoginPage next={next} message={error.message} />,
+          <ErrorPage code={error.code} message={error.message} />,
           error.status as ContentfulStatusCode,
         );
       }
@@ -731,21 +841,68 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
     }
   });
 
-  app.get("/auth/cli/:id", (context) =>
-    context.html(<AuthorizationPage requestId={context.req.param("id")} />),
-  );
-  app.post("/auth/cli/:id", async (context) => {
+  app.post("/invite/:token", async (context) => {
+    const token = context.req.param("token");
     const body = await context.req.parseBody();
+    let authUserId: string | undefined;
     try {
-      const credential = service.completeOwnerAuthorization(
-        context.req.param("id"),
-        formString(body, "access_key"),
-        formString(body, "owner"),
+      const username = service.humanInviteUsername(
+        token,
+        formString(body, "username"),
       );
-      setOwnerCookie(
-        context,
-        credential.key,
-        externalOrigin(context.req.raw, requestOriginOptions),
+      const signedUp = await humanAuth.api.signUpEmail({
+        body: {
+          email: localAuthEmail(username),
+          name: username,
+          username,
+          displayUsername: username,
+          password: formString(body, "password"),
+        },
+        headers: context.req.raw.headers,
+        returnHeaders: true,
+      });
+      authUserId = signedUp.response.user.id;
+      service.redeemHumanInvite(token, authUserId, username);
+      appendAuthCookies(context, signedUp.headers);
+      return context.redirect("/welcome");
+    } catch (error) {
+      if (authUserId) service.discardUnlinkedAuthUser(authUserId);
+      try {
+        const invite = service.inspectHumanInvite(token);
+        return context.html(
+          <InviteAcceptancePage
+            token={token}
+            expiresAt={invite.expires_at}
+            message={authErrorMessage(error)}
+          />,
+          authErrorStatus(error),
+        );
+      } catch {
+        return context.html(
+          <ErrorPage code="invalid_invitation" message={authErrorMessage(error)} />,
+          authErrorStatus(error),
+        );
+      }
+    }
+  });
+
+  app.get("/auth/cli/:id", (context) => {
+    const identity = browserOwner(context);
+    if (!identity) {
+      return context.redirect(
+        `/login?next=${encodeURIComponent(context.req.path)}`,
+      );
+    }
+    return context.html(
+      <AuthorizationPage requestId={context.req.param("id")} identity={identity} />,
+    );
+  });
+  app.post("/auth/cli/:id", (context) => {
+    const identity = requireBrowserOwner(context, service);
+    try {
+      const credential = service.completeOwnerAuthorizationFor(
+        context.req.param("id"),
+        identity,
       );
       return context.html(<AuthorizationCompletePage owner={credential.owner} />);
     } catch (error) {
@@ -753,6 +910,7 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
         return context.html(
           <AuthorizationPage
             requestId={context.req.param("id")}
+            identity={identity}
             message={error.message}
           />,
           error.status as ContentfulStatusCode,
@@ -785,18 +943,157 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
     } satisfies GraphOptions));
   });
 
-  app.get("/connect", (context) => {
+  app.get("/welcome", (context) => {
     const identity = requireBrowserOwner(context, service);
     return context.html(
-      <ConnectPage
+      <QuickstartPage
         identity={identity}
         origin={externalOrigin(context.req.raw, requestOriginOptions)}
+        tab="agents"
+        mode="repository"
+        welcome
       />,
     );
   });
 
-  app.post("/logout", (context) => {
-    deleteCookie(context, "swarmbook_owner_key", { path: "/" });
+  app.post("/welcome/complete", (context) => {
+    service.markHumanOnboarded(requireAuthUserId(context));
+    return context.redirect("/");
+  });
+
+  app.get("/quickstart", (context) => {
+    const identity = requireBrowserOwner(context, service);
+    const tab = context.req.query("tab") === "people" ? "people" : "agents";
+    const mode = context.req.query("mode") === "global" ? "global" : "repository";
+    return context.html(
+      <QuickstartPage
+        identity={identity}
+        origin={externalOrigin(context.req.raw, requestOriginOptions)}
+        tab={tab}
+        mode={mode}
+      />,
+    );
+  });
+
+  app.get("/users", (context) => {
+    const identity = requireBrowserOwner(context, service);
+    const tab = context.req.query("tab") === "invites" ? "invites" : "team";
+    return context.html(
+      <UsersPage
+        identity={identity}
+        tab={tab}
+        accounts={service.listHumanAccounts()}
+        invites={service.listHumanInvites()}
+      />,
+    );
+  });
+
+  app.post("/invites", async (context) => {
+    const identity = requireBrowserOwner(context, service);
+    try {
+      const invite = service.createHumanInvite(identity);
+      const inviteUrl = new URL(
+        `/invite/${invite.token}`,
+        externalOrigin(context.req.raw, requestOriginOptions),
+      ).toString();
+      return context.html(
+        <UsersPage
+          identity={identity}
+          tab="invites"
+          inviteUrl={inviteUrl}
+          inviteLabel="Copy this invitation now"
+          accounts={service.listHumanAccounts()}
+          invites={service.listHumanInvites()}
+        />,
+      );
+    } catch (error) {
+      if (error instanceof AppError) {
+        return context.html(
+          <UsersPage
+            identity={identity}
+            tab="invites"
+            message={error.message}
+            accounts={service.listHumanAccounts()}
+            invites={service.listHumanInvites()}
+          />,
+          error.status as ContentfulStatusCode,
+        );
+      }
+      throw error;
+    }
+  });
+
+  app.post("/invites/:id/revoke", (context) => {
+    requireBrowserOwner(context, service);
+    service.revokeHumanInvite(Number(context.req.param("id")));
+    return context.redirect("/users?tab=invites");
+  });
+
+  app.get("/keys", (context) => {
+    const identity = requireBrowserOwner(context, service);
+    return context.html(
+      <KeysPage
+        identity={identity}
+        origin={externalOrigin(context.req.raw, requestOriginOptions)}
+        keys={service.listAgentKeys()}
+      />,
+    );
+  });
+
+  app.post("/keys", async (context) => {
+    const identity = requireBrowserOwner(context, service);
+    const body = await context.req.parseBody();
+    try {
+      service.mintAgentKey(
+        identity,
+        formString(body, "mininame"),
+      );
+      return context.html(
+        <KeysPage
+          identity={identity}
+          origin={externalOrigin(context.req.raw, requestOriginOptions)}
+          keys={service.listAgentKeys()}
+        />,
+      );
+    } catch (error) {
+      if (error instanceof AppError) {
+        return context.html(
+          <KeysPage
+            identity={identity}
+            origin={externalOrigin(context.req.raw, requestOriginOptions)}
+            keys={service.listAgentKeys()}
+            message={error.message}
+          />,
+          error.status as ContentfulStatusCode,
+        );
+      }
+      throw error;
+    }
+  });
+
+  app.post("/keys/:id/rotate", (context) => {
+    requireBrowserOwner(context, service);
+    service.rotateAgentKey(Number(context.req.param("id")));
+    return context.redirect("/keys");
+  });
+
+  app.post("/keys/:id/revoke", (context) => {
+    requireBrowserOwner(context, service);
+    service.revokeAgentKey(Number(context.req.param("id")));
+    return context.redirect("/keys");
+  });
+
+  app.get("/connect", (context) => {
+    requireBrowserOwner(context, service);
+    return context.redirect("/quickstart");
+  });
+
+  app.post("/logout", async (context) => {
+    const signedOut = await humanAuth.api.signOut({
+      headers: context.req.raw.headers,
+      returnHeaders: true,
+    });
+    appendAuthCookies(context, signedOut.headers);
     return context.redirect("/login");
   });
 
@@ -948,7 +1245,7 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
       if (!context.req.path.startsWith("/api/")) {
         return context.html(
           <ErrorPage
-            identity={browserOwner(context, service)}
+            identity={browserOwner(context)}
             code={error.code}
             message={error.message}
           />,

@@ -24,6 +24,7 @@ let service: SwarmbookService;
 let baseUrl: string;
 let amberHome: string;
 let cobaltHome: string;
+const browserCookies = new Map<string, string>();
 
 beforeAll(() => {
   database = createDatabase(":memory:");
@@ -47,11 +48,12 @@ async function cli(
   args: string[],
   stdin?: string,
   cwd = projectRoot,
+  environment: Record<string, string> = {},
 ): Promise<CliResult> {
   const child = Bun.spawn({
     cmd: [bun, cliEntry, ...args],
     cwd,
-    env: { ...process.env, HOME: home },
+    env: { ...process.env, HOME: home, ...environment },
     stdin: stdin === undefined ? "ignore" : new Blob([stdin]),
     stdout: "pipe",
     stderr: "pipe",
@@ -91,10 +93,46 @@ async function browserAuth(home: string, owner: string): Promise<CliResult> {
     verificationUrl = stderr.match(/https?:\/\/[^\s]+\/auth\/cli\/[^\s]+/)?.[0];
   }
   expect(verificationUrl).toBeString();
+  let cookie = browserCookies.get(owner);
+  if (!cookie) {
+    let enrollment: Response;
+    if (!service.hasHumanAccounts()) {
+      enrollment = await fetch(`${baseUrl}/setup`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          username: owner,
+          password: `password-${owner}`,
+          access_key: "local-swarmbook",
+        }),
+        redirect: "manual",
+      });
+    } else {
+      const inviterCookie = browserCookies.values().next().value as string;
+      const invitation = await fetch(`${baseUrl}/invites`, {
+        method: "POST",
+        headers: {
+          cookie: inviterCookie,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({ username: owner }),
+      });
+      const token = (await invitation.text()).match(/swarmbook_invite_[A-Za-z0-9_-]+/)?.[0];
+      expect(token).toBeString();
+      enrollment = await fetch(`${baseUrl}/invite/${token}`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ username: owner, password: `password-${owner}` }),
+        redirect: "manual",
+      });
+    }
+    expect(enrollment.status).toBe(302);
+    cookie = enrollment.headers.get("set-cookie")!.split(";", 1)[0]!;
+    browserCookies.set(owner, cookie);
+  }
   const completion = await fetch(verificationUrl!, {
     method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ owner, access_key: "local-swarmbook" }),
+    headers: { cookie },
   });
   expect(completion.status).toBe(200);
   while (true) {
@@ -147,6 +185,31 @@ describe.serial("CLI as a separate process", () => {
       mininame: "amber-ant",
     });
     expect((await cli(amberHome, ["boards"])).json?.boards).toHaveLength(5);
+
+    const minted = await fetch(`${baseUrl}/keys`, {
+      method: "POST",
+      headers: {
+        cookie: browserCookies.get("alex")!,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ mininame: "nightly-review" }),
+    });
+    const mintedHtml = await minted.text();
+    expect(mintedHtml).toContain("alex/nightly-review");
+    const token = database.sqlite.query<{ recoverable_secret: string }, []>(
+      "select recoverable_secret from tokens join owners on owners.id = tokens.owner_id where owners.name = 'alex' and tokens.handle = 'nightly-review'",
+    ).get()?.recoverable_secret;
+    expect(token).toBeString();
+    const headlessEnvironment = {
+      SWARMBOOK_URL: baseUrl,
+      SWARMBOOK_TOKEN: token!,
+    };
+    expect(
+      (await cli(amberHome, ["whoami"], undefined, projectRoot, headlessEnvironment)).json,
+    ).toEqual({ owner: "alex", mininame: "nightly-review" });
+    expect(
+      (await cli(amberHome, ["boards"], undefined, projectRoot, headlessEnvironment)).json?.boards,
+    ).toHaveLength(5);
 
     const opening = await cli(amberHome, [
       "start",

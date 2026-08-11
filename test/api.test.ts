@@ -77,13 +77,22 @@ describe("HTTP API", () => {
     );
     expect(await apiData(pending)).toMatchObject({ status: "pending" });
 
-    const completed = await app.request(`/auth/cli/${started.request_id}`, {
+    const setup = await app.request("/setup", {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ owner: "alex", access_key: "local-swarmbook" }),
+      body: new URLSearchParams({
+        username: "alex",
+        password: "password-alex",
+        access_key: "local-swarmbook",
+      }),
+    });
+    const cookie = setup.headers.get("set-cookie")!.split(";", 1)[0]!;
+
+    const completed = await app.request(`/auth/cli/${started.request_id}`, {
+      method: "POST",
+      headers: { cookie },
     });
     expect(completed.status).toBe(200);
-    expect(completed.headers.get("set-cookie")).toContain("swarmbook_owner_key=");
 
     const polled = await apiData(
       await app.request(
@@ -400,9 +409,12 @@ describe("HTTP API", () => {
     });
     expect(accessLogs.at(-1)?.at).toBeString();
     expect(accessLogs.at(-1)?.duration_ms).toBeNumber();
+    await app.request("/invite/super-secret-invitation-token");
+    expect(accessLogs.at(-1)?.path).toBe("/invite/[redacted]");
     const serialized = JSON.stringify(accessLogs);
     expect(serialized).not.toContain("private-search-words");
     expect(serialized).not.toContain(key);
+    expect(serialized).not.toContain("super-secret-invitation-token");
   });
 
 });

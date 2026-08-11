@@ -18,6 +18,9 @@ import { alias } from "drizzle-orm/sqlite-core";
 import type { SwarmbookDatabase } from "../db/database";
 import {
   boards,
+  authUsers,
+  humanInvites,
+  humanOwnerLinks,
   oauthClients,
   ownerCredentials,
   owners,
@@ -45,6 +48,32 @@ export interface OAuthClientRecord {
   redirectUris: string[];
   clientName?: string;
   scope?: string;
+}
+
+export interface HumanInviteView {
+  id: number;
+  claimed_by: string | null;
+  invited_by: string;
+  created_at: string;
+  expires_at: string;
+  status: "pending" | "consumed" | "revoked" | "expired";
+}
+
+export interface HumanAccountView {
+  username: string;
+  owner: string;
+  created_at: string;
+  onboarded_at: string | null;
+}
+
+export interface AgentKeyView {
+  id: number;
+  owner: string;
+  mininame: string;
+  key: string | null;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
 }
 
 export interface ServiceOptions {
@@ -369,6 +398,7 @@ export class SwarmbookService {
   private readonly threadPostLimit: number;
   private readonly writesPerMinute: number;
   private readonly accessKeyHash: string;
+  readonly authSecret: string;
   private readonly authorizationTtlMs: number;
   private readonly authorizationMaxPending: number;
   private readonly subscribers = new Set<(post: PostView) => void>();
@@ -382,7 +412,7 @@ export class SwarmbookService {
   >();
 
   constructor(
-    private readonly db: SwarmbookDatabase,
+    readonly db: SwarmbookDatabase,
     options: ServiceOptions = {},
   ) {
     this.now = options.now ?? Date.now;
@@ -393,6 +423,7 @@ export class SwarmbookService {
     this.writesPerMinute = options.writesPerMinute ?? 30;
     this.accessKeyHash =
       options.accessKeyHash ?? keyHash(options.accessKey ?? "local-swarmbook");
+    this.authSecret = keyHash(`swarmbook-human-auth:${this.accessKeyHash}`);
     this.authorizationTtlMs = options.authorizationTtlMs ?? 10 * 60_000;
     this.authorizationMaxPending = options.authorizationMaxPending ?? 1_000;
   }
@@ -461,6 +492,313 @@ export class SwarmbookService {
       }
     }
     throw appError("key_generation_failed", "Could not generate a unique credential.", 500);
+  }
+
+  private assertAccessKey(suppliedAccessKey: string): void {
+    if (!equalSecretHash(suppliedAccessKey, this.accessKeyHash)) {
+      throw appError("invalid_access_key", "The server access key is invalid.", 401);
+    }
+  }
+
+  hasHumanAccounts(): boolean {
+    return Boolean(
+      this.db
+        .select({ ownerId: humanOwnerLinks.ownerId })
+        .from(humanOwnerLinks)
+        .limit(1)
+        .get(),
+    );
+  }
+
+  ownerForAuthUser(authUserId: string): OwnerIdentity | undefined {
+    return this.db
+      .select({ ownerId: owners.id, owner: owners.name })
+      .from(humanOwnerLinks)
+      .innerJoin(owners, eq(owners.id, humanOwnerLinks.ownerId))
+      .where(eq(humanOwnerLinks.authUserId, authUserId))
+      .get();
+  }
+
+  discardUnlinkedAuthUser(authUserId: string): void {
+    if (this.ownerForAuthUser(authUserId)) return;
+    this.db.delete(authUsers).where(eq(authUsers.id, authUserId)).run();
+  }
+
+  assertHumanBootstrapAvailable(
+    suppliedAccessKey: string,
+    requestedOwner: string,
+  ): string {
+    this.assertAccessKey(suppliedAccessKey);
+    if (this.hasHumanAccounts()) {
+      throw appError(
+        "setup_complete",
+        "The administrator login already exists. Sign in or ask for an invitation.",
+        409,
+      );
+    }
+    const owner = normalizeOwner(requestedOwner);
+    const existing = this.db
+      .select({ authUserId: humanOwnerLinks.authUserId })
+      .from(owners)
+      .leftJoin(humanOwnerLinks, eq(humanOwnerLinks.ownerId, owners.id))
+      .where(sql`lower(${owners.name}) = ${owner}`)
+      .get();
+    if (existing?.authUserId) {
+      throw appError("owner_taken", `The username ${owner} already has a login.`, 409);
+    }
+    return owner;
+  }
+
+  completeHumanBootstrap(
+    suppliedAccessKey: string,
+    requestedOwner: string,
+    authUserId: string,
+  ): OwnerIdentity {
+    const owner = this.assertHumanBootstrapAvailable(
+      suppliedAccessKey,
+      requestedOwner,
+    );
+    return this.db.transaction((tx) => {
+      const linked = tx
+        .select({ ownerId: humanOwnerLinks.ownerId })
+        .from(humanOwnerLinks)
+        .where(eq(humanOwnerLinks.authUserId, authUserId))
+        .get();
+      if (linked) {
+        throw appError("account_already_linked", "This login is already linked.", 409);
+      }
+      let ownerRow = tx
+        .select({ id: owners.id, name: owners.name })
+        .from(owners)
+        .where(sql`lower(${owners.name}) = ${owner}`)
+        .get();
+      if (!ownerRow) {
+        ownerRow = tx
+          .insert(owners)
+          .values({ name: owner, createdAt: this.now() })
+          .returning({ id: owners.id, name: owners.name })
+          .get();
+      }
+      tx.insert(humanOwnerLinks)
+        .values({
+          authUserId,
+          ownerId: ownerRow.id,
+          createdAt: this.now(),
+        })
+        .run();
+      return { ownerId: ownerRow.id, owner: ownerRow.name };
+    });
+  }
+
+  createHumanInvite(
+    inviter: OwnerIdentity,
+    ttlMs = 24 * 60 * 60_000,
+  ): HumanInviteView & { token: string } {
+    const now = this.now();
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const token = `swarmbook_invite_${defaultRequestId()}`;
+      try {
+        const created = this.db
+          .insert(humanInvites)
+          .values({
+            tokenHash: keyHash(token),
+            invitedByOwnerId: inviter.ownerId,
+            createdAt: now,
+            expiresAt: now + ttlMs,
+          })
+          .returning({ id: humanInvites.id })
+          .get();
+        return {
+          id: created.id,
+          claimed_by: null,
+          invited_by: inviter.owner,
+          token,
+          created_at: new Date(now).toISOString(),
+          expires_at: new Date(now + ttlMs).toISOString(),
+          status: "pending",
+        };
+      } catch (error) {
+        if (isUniqueConstraint(error)) continue;
+        throw error;
+      }
+    }
+    throw appError("invite_generation_failed", "Could not create an invitation.", 500);
+  }
+
+  inspectHumanInvite(token: string): { id: number; expires_at: string } {
+    const invite = this.db
+      .select()
+      .from(humanInvites)
+      .where(eq(humanInvites.tokenHash, keyHash(token)))
+      .get();
+    if (!invite) throw appError("invite_not_found", "This invitation is invalid.", 404);
+    if (invite.revokedAt) throw appError("invite_revoked", "This invitation was revoked.", 410);
+    if (invite.consumedAt) throw appError("invite_consumed", "This invitation was already used.", 410);
+    if (invite.expiresAt <= this.now()) throw appError("invite_expired", "This invitation expired.", 410);
+    return {
+      id: invite.id,
+      expires_at: new Date(invite.expiresAt).toISOString(),
+    };
+  }
+
+  humanInviteUsername(token: string, requestedOwner: string): string {
+    this.inspectHumanInvite(token);
+    const owner = normalizeOwner(requestedOwner);
+    const existingOwner = this.db
+      .select({ id: owners.id, authUserId: humanOwnerLinks.authUserId })
+      .from(owners)
+      .leftJoin(humanOwnerLinks, eq(humanOwnerLinks.ownerId, owners.id))
+      .where(sql`lower(${owners.name}) = ${owner}`)
+      .get();
+    if (existingOwner?.authUserId) {
+      throw appError("owner_taken", `The username ${owner} already exists.`, 409);
+    }
+    return owner;
+  }
+
+  redeemHumanInvite(
+    token: string,
+    authUserId: string,
+    requestedOwner: string,
+  ): OwnerIdentity {
+    const tokenHash = keyHash(token);
+    return this.db.transaction((tx) => {
+      const invite = tx
+        .select()
+        .from(humanInvites)
+        .where(eq(humanInvites.tokenHash, tokenHash))
+        .get();
+      if (!invite) throw appError("invite_not_found", "This invitation is invalid.", 404);
+      if (invite.revokedAt) throw appError("invite_revoked", "This invitation was revoked.", 410);
+      if (invite.consumedAt) throw appError("invite_consumed", "This invitation was already used.", 410);
+      if (invite.expiresAt <= this.now()) throw appError("invite_expired", "This invitation expired.", 410);
+      const ownerName = normalizeOwner(requestedOwner);
+      const authUsername = tx
+        .select({ username: authUsers.username })
+        .from(authUsers)
+        .where(eq(authUsers.id, authUserId))
+        .get()?.username;
+      if (!authUsername || authUsername.toLowerCase() !== ownerName) {
+        throw appError("invite_username_mismatch", "The account username does not match this invitation.", 409);
+      }
+      let owner = tx
+        .select({ id: owners.id, name: owners.name, authUserId: humanOwnerLinks.authUserId })
+        .from(owners)
+        .leftJoin(humanOwnerLinks, eq(humanOwnerLinks.ownerId, owners.id))
+        .where(sql`lower(${owners.name}) = ${ownerName}`)
+        .get();
+      if (owner?.authUserId) {
+        throw appError("owner_taken", `The username ${ownerName} already has a login.`, 409);
+      }
+      if (!owner) {
+        owner = tx
+          .insert(owners)
+          .values({ name: ownerName, createdAt: this.now() })
+          .returning({ id: owners.id, name: owners.name, authUserId: sql<null>`null` })
+          .get();
+      }
+      tx.insert(humanOwnerLinks)
+        .values({ authUserId, ownerId: owner.id, createdAt: this.now() })
+        .run();
+      tx.update(humanInvites)
+        .set({ consumedAt: this.now(), consumedByAuthUserId: authUserId })
+        .where(eq(humanInvites.id, invite.id))
+        .run();
+      return { ownerId: owner.id, owner: owner.name };
+    });
+  }
+
+  listHumanAccounts(): HumanAccountView[] {
+    return this.db
+      .select({
+        username: authUsers.username,
+        owner: owners.name,
+        createdAt: authUsers.createdAt,
+        onboardedAt: humanOwnerLinks.onboardedAt,
+      })
+      .from(humanOwnerLinks)
+      .innerJoin(authUsers, eq(authUsers.id, humanOwnerLinks.authUserId))
+      .innerJoin(owners, eq(owners.id, humanOwnerLinks.ownerId))
+      .orderBy(asc(owners.name))
+      .all()
+      .map((account) => ({
+        username: account.username ?? account.owner,
+        owner: account.owner,
+        created_at: account.createdAt.toISOString(),
+        onboarded_at: account.onboardedAt
+          ? new Date(account.onboardedAt).toISOString()
+          : null,
+      }));
+  }
+
+  listHumanInvites(): HumanInviteView[] {
+    const now = this.now();
+    const inviteCreators = alias(owners, "invite_creators");
+    return this.db
+      .select({
+        id: humanInvites.id,
+        inviter: inviteCreators.name,
+        claimedBy: authUsers.username,
+        createdAt: humanInvites.createdAt,
+        expiresAt: humanInvites.expiresAt,
+        consumedAt: humanInvites.consumedAt,
+        revokedAt: humanInvites.revokedAt,
+      })
+      .from(humanInvites)
+      .innerJoin(inviteCreators, eq(inviteCreators.id, humanInvites.invitedByOwnerId))
+      .leftJoin(authUsers, eq(authUsers.id, humanInvites.consumedByAuthUserId))
+      .orderBy(desc(humanInvites.createdAt))
+      .all()
+      .map((invite) => ({
+        id: invite.id,
+        claimed_by: invite.claimedBy,
+        invited_by: invite.inviter,
+        created_at: new Date(invite.createdAt).toISOString(),
+        expires_at: new Date(invite.expiresAt).toISOString(),
+        status: invite.consumedAt
+          ? "consumed" as const
+          : invite.revokedAt
+            ? "revoked" as const
+            : invite.expiresAt <= now
+              ? "expired" as const
+              : "pending" as const,
+      }));
+  }
+
+  revokeHumanInvite(id: number): void {
+    const inviteId = positiveInteger(id, "invite_id");
+    const invite = this.db
+      .select({ id: humanInvites.id, consumedAt: humanInvites.consumedAt })
+      .from(humanInvites)
+      .where(eq(humanInvites.id, inviteId))
+      .get();
+    if (!invite) throw appError("invite_not_found", "Invitation not found.", 404);
+    if (invite.consumedAt) {
+      throw appError("invite_consumed", "A used invitation cannot be revoked.", 409);
+    }
+    this.db
+      .update(humanInvites)
+      .set({ revokedAt: this.now() })
+      .where(eq(humanInvites.id, inviteId))
+      .run();
+  }
+
+  isHumanOnboarded(authUserId: string): boolean {
+    return Boolean(
+      this.db
+        .select({ onboardedAt: humanOwnerLinks.onboardedAt })
+        .from(humanOwnerLinks)
+        .where(eq(humanOwnerLinks.authUserId, authUserId))
+        .get()?.onboardedAt,
+    );
+  }
+
+  markHumanOnboarded(authUserId: string): void {
+    this.db
+      .update(humanOwnerLinks)
+      .set({ onboardedAt: this.now() })
+      .where(eq(humanOwnerLinks.authUserId, authUserId))
+      .run();
   }
 
   authenticateOwner(key: string): OwnerIdentity {
@@ -565,6 +903,7 @@ export class SwarmbookService {
             ownerId: ownerIdentity.ownerId,
             handle: mininame,
             secretHash: keyHash(key),
+            recoverableSecret: key,
             createdAt: this.now(),
           })
           .run();
@@ -591,6 +930,137 @@ export class SwarmbookService {
       }
     }
     throw appError("key_generation_failed", "Could not generate a unique credential.", 500);
+  }
+
+  listAgentKeys(): AgentKeyView[] {
+    return this.db
+      .select({
+        id: tokens.id,
+        owner: owners.name,
+        mininame: tokens.handle,
+        key: tokens.recoverableSecret,
+        createdAt: tokens.createdAt,
+        lastUsedAt: tokens.lastUsedAt,
+        revokedAt: tokens.revokedAt,
+      })
+      .from(tokens)
+      .innerJoin(owners, eq(owners.id, tokens.ownerId))
+      .where(sql`${tokens.handle} <> 'human'`)
+      .orderBy(asc(owners.name), asc(tokens.handle))
+      .all()
+      .map((token) => ({
+        id: token.id,
+        owner: token.owner,
+        mininame: token.mininame,
+        key: token.key,
+        created_at: new Date(token.createdAt).toISOString(),
+        last_used_at: token.lastUsedAt
+          ? new Date(token.lastUsedAt).toISOString()
+          : null,
+        revoked_at: token.revokedAt
+          ? new Date(token.revokedAt).toISOString()
+          : null,
+      }));
+  }
+
+  mintAgentKey(
+    ownerIdentity: OwnerIdentity,
+    requestedMininame: string,
+  ): { owner: string; mininame: string; key: string } {
+    const mininame = normalizeHandle(requestedMininame);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const key = this.generateKey();
+      try {
+        const existing = this.db
+          .select({ id: tokens.id })
+          .from(tokens)
+          .where(
+            and(
+              eq(tokens.ownerId, ownerIdentity.ownerId),
+              sql`lower(${tokens.handle}) = ${mininame}`,
+            ),
+          )
+          .get();
+        if (existing) {
+          this.db
+            .update(tokens)
+            .set({
+              secretHash: keyHash(key),
+              recoverableSecret: key,
+              revokedAt: null,
+              lastUsedAt: null,
+            })
+            .where(eq(tokens.id, existing.id))
+            .run();
+        } else {
+          this.db
+            .insert(tokens)
+            .values({
+              ownerId: ownerIdentity.ownerId,
+              handle: mininame,
+              secretHash: keyHash(key),
+              recoverableSecret: key,
+              createdAt: this.now(),
+            })
+            .run();
+        }
+        return { owner: ownerIdentity.owner, mininame, key };
+      } catch (error) {
+        if (isUniqueConstraint(error)) continue;
+        throw error;
+      }
+    }
+    throw appError("key_generation_failed", "Could not mint the agent key.", 500);
+  }
+
+  rotateAgentKey(id: number): { owner: string; mininame: string; key: string } {
+    const tokenId = positiveInteger(id, "key_id");
+    const token = this.db
+      .select({ id: tokens.id, owner: owners.name, mininame: tokens.handle })
+      .from(tokens)
+      .innerJoin(owners, eq(owners.id, tokens.ownerId))
+      .where(eq(tokens.id, tokenId))
+      .get();
+    if (!token || token.mininame === "human") {
+      throw appError("key_not_found", "Agent key not found.", 404);
+    }
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const key = this.generateKey();
+      try {
+        this.db
+          .update(tokens)
+          .set({
+            secretHash: keyHash(key),
+            recoverableSecret: key,
+            revokedAt: null,
+            lastUsedAt: null,
+          })
+          .where(eq(tokens.id, token.id))
+          .run();
+        return { owner: token.owner, mininame: token.mininame, key };
+      } catch (error) {
+        if (isUniqueConstraint(error)) continue;
+        throw error;
+      }
+    }
+    throw appError("key_generation_failed", "Could not rotate the agent key.", 500);
+  }
+
+  revokeAgentKey(id: number): void {
+    const tokenId = positiveInteger(id, "key_id");
+    const token = this.db
+      .select({ id: tokens.id, handle: tokens.handle })
+      .from(tokens)
+      .where(eq(tokens.id, tokenId))
+      .get();
+    if (!token || token.handle === "human") {
+      throw appError("key_not_found", "Agent key not found.", 404);
+    }
+    this.db
+      .update(tokens)
+      .set({ revokedAt: this.now() })
+      .where(eq(tokens.id, token.id))
+      .run();
   }
 
   selectAgentIdentity(
@@ -625,6 +1095,7 @@ export class SwarmbookService {
             ownerId: ownerIdentity.ownerId,
             handle: mininame,
             secretHash: keyHash(key),
+            recoverableSecret: key,
             createdAt: this.now(),
           })
           .returning({ tokenId: tokens.id, mininame: tokens.handle })
@@ -708,7 +1179,12 @@ export class SwarmbookService {
       })
       .from(tokens)
       .innerJoin(owners, eq(owners.id, tokens.ownerId))
-      .where(eq(tokens.secretHash, keyHash(key)))
+      .where(
+        and(
+          eq(tokens.secretHash, keyHash(key)),
+          isNull(tokens.revokedAt),
+        ),
+      )
       .get();
     if (!token) {
       throw appError(
@@ -717,6 +1193,11 @@ export class SwarmbookService {
         401,
       );
     }
+    this.db
+      .update(tokens)
+      .set({ lastUsedAt: this.now() })
+      .where(eq(tokens.id, token.tokenId))
+      .run();
     return token;
   }
 
@@ -759,6 +1240,26 @@ export class SwarmbookService {
     const credential = this.issueOwnerCredential(suppliedAccessKey, requestedOwner);
     request.completed = credential;
     return credential;
+  }
+
+  completeOwnerAuthorizationFor(
+    requestId: string,
+    ownerIdentity: OwnerIdentity,
+  ): { owner: string; key: string } {
+    const request = this.authorizationRequest(requestId);
+    if (request.completed) {
+      throw appError(
+        "authorization_already_completed",
+        "This authorization request has already been completed.",
+        409,
+      );
+    }
+    const completed = {
+      owner: ownerIdentity.owner,
+      key: this.createOwnerCredential(ownerIdentity),
+    };
+    request.completed = completed;
+    return completed;
   }
 
   pollOwnerAuthorization(
