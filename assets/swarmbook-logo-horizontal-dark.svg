@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 250 64" role="img" aria-label="Swarmbook">
+  <!-- Wordmark outlined from Eightgon Regular by GGBotNet, licensed under SIL OFL 1.1. -->
+  <defs>
+    <path id="rhombus" d="M28.7 20.742H48.3Q51.5 20.742 49.9 23.513L40.1 40.487Q38.5 43.258 35.3 43.258H15.7Q12.5 43.258 14.1 40.487L23.9 23.513Q25.5 20.742 28.7 20.742Z" />
+    <g id="dots">
+      <circle cx="25.5" cy="20.742" r="5" />
+      <circle cx="38.5" cy="20.742" r="5" />
+      <circle cx="51.5" cy="20.742" r="5" />
+      <circle cx="19" cy="32" r="5" />
+      <circle cx="32" cy="32" r="5" />
+      <circle cx="45" cy="32" r="5" />
+      <circle cx="12.5" cy="43.258" r="5" />
+      <circle cx="25.5" cy="43.258" r="5" />
+      <circle cx="38.5" cy="43.258" r="5" />
+    </g>
+    <clipPath id="rhombus-interior" clipPathUnits="userSpaceOnUse">
+      <path d="M28.7 20.742H48.3Q51.5 20.742 49.9 23.513L40.1 40.487Q38.5 43.258 35.3 43.258H15.7Q12.5 43.258 14.1 40.487L23.9 23.513Q25.5 20.742 28.7 20.742Z" />
+    </clipPath>
+  </defs>
+  <g transform="translate(32 32) scale(1.3) translate(-32 -32)">
+    <use href="#dots" fill="#fff" />
+    <use href="#rhombus" fill="#fff" />
+    <g fill="#000" clip-path="url(#rhombus-interior)">
+      <circle cx="25.5" cy="20.742" r="5" />
+      <circle cx="38.5" cy="20.742" r="5" />
+      <circle cx="51.5" cy="20.742" r="5" />
+      <circle cx="19" cy="32" r="5" />
+      <circle cx="32" cy="32" r="5" />
+      <circle cx="45" cy="32" r="5" />
+      <circle cx="12.5" cy="43.258" r="5" />
+      <circle cx="25.5" cy="43.258" r="5" />
+      <circle cx="38.5" cy="43.258" r="5" />
+    </g>
+  </g>
+  <g fill="#fff" transform="translate(76 42) scale(.017 -.017)">
+    <path d="M748 1152 978 922V708H798V848L674 972H393L270 848V790L393 666H749L978 436V230L749 0H320L90 230V444H270V304L394 180H675L798 304V362L675 486H319L90 716V922L319 1152ZM1964 180 2088 304V1152H2268V230L2038 0H1853L1713 140L1573 0H1388L1158 230V1152H1338V304L1462 180H1499L1623 304V972H1803V304L1927 180ZM3336 230 3106 0H2677L2448 230V436L2677 666H3156V848L3032 972H2752L2628 848V708H2448V922L2678 1152H3106L3336 922ZM3032 180 3156 304V486H2751L2628 362V304L2751 180ZM3696 0H3516V922L3746 1152H4174L4404 922V708H4224V848L4100 972H3820L3696 848ZM5464 1152 5694 922V0H5514V848L5390 972H5353L5229 848V0H5049V848L4925 972H4888L4764 848V0H4584V922L4814 1152H4999L5139 1012L5279 1152ZM6054 304 6178 180H6458L6582 304V848L6458 972H6178L6054 848ZM5874 1596H6054V1102L6104 1152H6532L6762 922V230L6532 0H6104L5874 230ZM7830 230 7600 0H7172L6942 230V922L7172 1152H7600L7830 922ZM7122 304 7246 180H7526L7650 304V848L7526 972H7246L7122 848ZM8898 230 8668 0H8240L8010 230V922L8240 1152H8668L8898 922ZM8190 304 8314 180H8594L8718 304V848L8594 972H8314L8190 848ZM9522 666V922L9752 1152H9966V972H9826L9702 848V666H9736L9966 436V0H9786V362L9662 486H9258V0H9078V1596H9258V666Z" />
+  </g>
+</svg>
