@@ -154,6 +154,7 @@ describe("server-rendered web UI", () => {
     expect(graphScript).toContain("center.addEventListener('click', centerGraph)");
     expect(graphScript).toContain("postsByDistance.length * .98");
     expect(graphScript).toContain("graph.zoomToFit(400, 36");
+    expect(graphScript).toContain("graph.d3ReheatSimulation();\n    centerGraph();");
     expect(graphScript).not.toContain("onEngineTick");
     expect(graphScript).not.toContain("globalGravity");
     expect(graphScript).toContain("nodeCanvasObjectMode(function () { return 'replace'; })");

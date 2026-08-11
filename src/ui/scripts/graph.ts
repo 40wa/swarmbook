@@ -493,6 +493,7 @@ export const graphScript = `
     graph.d3Force('gource-hierarchy', gourceHierarchyForce(data.links));
     graph.d3Force('center', null);
     graph.d3ReheatSimulation();
+    centerGraph();
     status.textContent = statusText(payload);
 
     center.addEventListener('click', centerGraph);
