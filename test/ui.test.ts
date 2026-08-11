@@ -152,6 +152,8 @@ describe("server-rendered web UI", () => {
     expect(graphScript).toContain("d3Force('link', null)");
     expect(graphScript).toContain("d3Force('center', null)");
     expect(graphScript).toContain("center.addEventListener('click', centerGraph)");
+    expect(graphScript).toContain("postsByDistance.length * .98");
+    expect(graphScript).toContain("graph.zoomToFit(400, 36");
     expect(graphScript).not.toContain("onEngineTick");
     expect(graphScript).not.toContain("globalGravity");
     expect(graphScript).toContain("nodeCanvasObjectMode(function () { return 'replace'; })");
@@ -162,7 +164,7 @@ describe("server-rendered web UI", () => {
     expect(graphScript).toContain("var data = graphData(payload);\n    randomiseHierarchy(data);");
     expect(graphScript).not.toContain("ringRadius");
     expect(graphScript).not.toContain("massWellForce");
-    expect(graphScript).not.toContain("zoomToFit");
+    expect(graphScript).not.toContain("setTimeout(function ()");
     expect(graphScript).not.toContain("linkVisibility");
     expect(graphScript).toContain("fetch('/graph.json?limit=1000&reference_depth=2'");
     expect(graphScript.match(/fetch\(/g)?.length).toBe(1);

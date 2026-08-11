@@ -440,12 +440,25 @@ export const graphScript = `
     }
     function centerGraph() {
       if (!graph || data.nodes.length === 0) return;
-      var centroid = data.nodes.reduce(function (sum, node) {
-        sum.x += node.x;
-        sum.y += node.y;
-        return sum;
-      }, { x: 0, y: 0 });
-      graph.centerAt(centroid.x / data.nodes.length, centroid.y / data.nodes.length, 350);
+      var horizontal = data.nodes.map(function (node) { return node.x; }).sort(function (a, b) { return a - b; });
+      var vertical = data.nodes.map(function (node) { return node.y; }).sort(function (a, b) { return a - b; });
+      var middle = Math.floor(data.nodes.length / 2);
+      var medianX = horizontal[middle];
+      var medianY = vertical[middle];
+      var postsByDistance = data.nodes
+        .filter(function (node) { return node.kind !== 'board'; })
+        .sort(function (left, right) {
+          return Math.hypot(left.x - medianX, left.y - medianY) -
+            Math.hypot(right.x - medianX, right.y - medianY);
+        });
+      var included = {};
+      data.nodes.forEach(function (node) {
+        if (node.kind === 'board') included[node.id] = true;
+      });
+      postsByDistance.slice(0, Math.ceil(postsByDistance.length * .98)).forEach(function (node) {
+        included[node.id] = true;
+      });
+      graph.zoomToFit(400, 36, function (node) { return included[node.id]; });
     }
 
     graph = ForceGraph()(container)
