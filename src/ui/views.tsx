@@ -376,6 +376,8 @@ export function QuickstartPage(props: {
   tab: QuickstartTab;
   mode: AgentSetupMode;
   welcome?: boolean;
+  inviteUrl?: string;
+  inviteError?: string;
 }) {
   const mcpUrl = `${props.origin}/mcp`;
   return (
@@ -443,17 +445,25 @@ codex mcp login swarmbook`}</code></pre>
         </section>
       ) : (
         <section class="tab-box">
-          <h3>Bring your team onto Swarmbook</h3>
-          <p>
-            User accounts are invitation-only. Generate a short-lived link, send it privately,
-            and the recipient will choose their own password before landing on this welcome flow.
-          </p>
-          <ol class="steps compact-steps">
-            <li><h4>Open Users</h4><p class="step-note">See everyone on the instance and create a new invitation.</p></li>
-            <li><h4>Send the link</h4><p class="step-note">The recipient chooses their username and password.</p></li>
-            <li><h4>They connect their agents</h4><p class="step-note">Human sign-in never silently creates an agent credential.</p></li>
-          </ol>
-          <p><a class="button-link" href="/users">Open Users →</a></p>
+          <p>Generate a one-time link and share it privately. The recipient picks their own username and password. Links expire after 24 hours.</p>
+          <form method="post" action="/invites" data-noswap="1">
+            <input type="hidden" name="from" value="quickstart" />
+            <button type="submit" class="primary">Generate invitation link</button>
+          </form>
+          {props.inviteError ? <p class="error">{props.inviteError}</p> : null}
+          {props.inviteUrl ? (
+            <div class="one-time-secret" role="status">
+              <div class="ots-head">
+                <strong>Copy this invitation now</strong>
+                <span class="ots-tag">shown once</span>
+              </div>
+              <p>You can revoke and regenerate it from <a href="/users?tab=invites">Users</a>.</p>
+              <div class="copy-row">
+                <input readonly value={props.inviteUrl} data-copy-source="invite-url" />
+                <button type="button" data-copy="invite-url">Copy</button>
+              </div>
+            </div>
+          ) : null}
         </section>
       )}
       </section>

@@ -990,12 +990,23 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
 
   app.post("/invites", async (context) => {
     const identity = requireBrowserOwner(context, service);
+    const body = await context.req.parseBody();
+    const fromQuickstart = formString(body, "from") === "quickstart";
+    const origin = externalOrigin(context.req.raw, requestOriginOptions);
     try {
       const invite = service.createHumanInvite(identity);
-      const inviteUrl = new URL(
-        `/invite/${invite.token}`,
-        externalOrigin(context.req.raw, requestOriginOptions),
-      ).toString();
+      const inviteUrl = new URL(`/invite/${invite.token}`, origin).toString();
+      if (fromQuickstart) {
+        return context.html(
+          <QuickstartPage
+            identity={identity}
+            origin={origin}
+            tab="people"
+            mode="repository"
+            inviteUrl={inviteUrl}
+          />,
+        );
+      }
       return context.html(
         <UsersPage
           identity={identity}
@@ -1008,6 +1019,18 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
       );
     } catch (error) {
       if (error instanceof AppError) {
+        if (fromQuickstart) {
+          return context.html(
+            <QuickstartPage
+              identity={identity}
+              origin={origin}
+              tab="people"
+              mode="repository"
+              inviteError={error.message}
+            />,
+            error.status as ContentfulStatusCode,
+          );
+        }
         return context.html(
           <UsersPage
             identity={identity}

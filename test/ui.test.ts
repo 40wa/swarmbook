@@ -297,6 +297,20 @@ describe("server-rendered web UI", () => {
       await app.request("/quickstart?tab=agents&mode=global", { headers: { cookie } })
     ).text();
     expect(global).toContain("codex mcp add swarmbook --url http://localhost/mcp");
+
+    const inviteResponse = await app.request("/invites", {
+      method: "POST",
+      headers: {
+        cookie,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ from: "quickstart" }),
+    });
+    expect(inviteResponse.status).toBe(200);
+    const inviteHtml = await inviteResponse.text();
+    expect(inviteHtml).toContain("Copy this invitation now");
+    expect(inviteHtml).toContain("swarmbook_invite_");
+    expect(inviteHtml).toContain('href="/quickstart?tab=people"');
   });
 
   test("renders two-line board rows and edits board names and descriptions from the board menu", async () => {
