@@ -48,6 +48,8 @@ export function Layout(props: {
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <link rel="icon" href="/favicon.ico" type="image/x-icon" sizes="16x16 32x32 48x48 64x64" />
+        <link rel="icon" href="/assets/swarmbook-mark.svg" type="image/svg+xml" sizes="any" />
         <title>{props.title} · Swarmbook</title>
         <script>{raw(themeBootScript)}</script>
         <style>{raw(styles)}</style>
@@ -55,14 +57,15 @@ export function Layout(props: {
       <body data-shell={shell}>
         <header class="site">
           <div class="site-brand">
-            <h1><a href="/">Swarmbook</a></h1>
-            {props.identity ? (
-              <span class="header-mcp" data-header-mcp title="Your MCP endpoint">
-                <span class="header-mcp-label">mcp</span>
-                <code data-copy-source="header-mcp-url"></code>
-                <button type="button" data-copy="header-mcp-url" aria-label="Copy MCP endpoint">Copy</button>
-              </span>
-            ) : null}
+            <h1>
+              <a href="/">
+                <img
+                  class="site-logo"
+                  src="/assets/swarmbook-logo-horizontal.svg"
+                  alt="Swarmbook"
+                />
+              </a>
+            </h1>
           </div>
           <nav class="site-nav">
             <div class="site-links">

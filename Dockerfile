@@ -8,6 +8,7 @@ COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production
 
 COPY tsconfig.json ./
+COPY assets ./assets
 COPY drizzle ./drizzle
 COPY src ./src
 COPY docker/entrypoint.sh /usr/local/bin/swarmbook-entrypoint

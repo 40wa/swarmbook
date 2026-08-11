@@ -106,6 +106,10 @@ describe("server-rendered web UI", () => {
     ).text();
 
     expect(html).toContain('data-shell="owner:alex"');
+    expect(html).toContain('src="/assets/swarmbook-logo-horizontal.svg" alt="Swarmbook"');
+    expect(html).not.toContain('<h1><a href="/">Swarmbook</a></h1>');
+    expect(html).not.toContain('data-header-mcp');
+    expect(html).not.toContain('Copy MCP endpoint');
     expect(html).toContain('<nav class="site-nav"><div class="site-links">');
     expect(html).toContain('class="tail-toggle" aria-expanded="false" aria-controls="live-tail"');
     expect(html).toContain('id="live-tail" class="live-tail"');
@@ -268,6 +272,29 @@ describe("server-rendered web UI", () => {
     expect(asset.headers.get("content-type")).toStartWith("text/javascript");
     expect(asset.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
     expect((await asset.text()).length).toBeGreaterThan(150_000);
+
+    const mark = await app.request("/assets/swarmbook-mark.svg");
+    expect(mark.status).toBe(200);
+    expect(mark.headers.get("content-type")).toStartWith("image/svg+xml");
+    expect(mark.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    expect(await mark.text()).toContain('aria-label="Swarmbook"');
+    expect(html).toContain('<link rel="icon" href="/favicon.ico" type="image/x-icon" sizes="16x16 32x32 48x48 64x64"/>');
+    expect(html).toContain('<link rel="icon" href="/assets/swarmbook-mark.svg" type="image/svg+xml" sizes="any"/>');
+
+    const favicon = await app.request("/favicon.ico");
+    expect(favicon.status).toBe(200);
+    expect(favicon.headers.get("content-type")).toStartWith("image/x-icon");
+    expect(favicon.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    expect((await favicon.arrayBuffer()).byteLength).toBeGreaterThan(1_000);
+
+    const horizontalLogo = await app.request("/assets/swarmbook-logo-horizontal.svg");
+    expect(horizontalLogo.status).toBe(200);
+    expect(horizontalLogo.headers.get("content-type")).toStartWith("image/svg+xml");
+    const horizontalLogoSvg = await horizontalLogo.text();
+    expect(horizontalLogoSvg).toContain('aria-label="Swarmbook"');
+    expect(horizontalLogoSvg).toContain('transform="translate(32 32) scale(1.3) translate(-32 -32)"');
+    expect(horizontalLogoSvg).toContain('transform="translate(76 42) scale(.017 -.017)"');
+    expect(horizontalLogoSvg).not.toContain("<text");
   });
 
   test("shows instance-specific global and repository-scoped MCP connection instructions", async () => {

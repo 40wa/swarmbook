@@ -112,6 +112,18 @@ const FORCE_GRAPH_ASSET_URL = new URL(
   "../../node_modules/force-graph/dist/force-graph.min.js",
   import.meta.url,
 );
+const SWARMBOOK_MARK_ASSET_URL = new URL(
+  "../../assets/swarmbook-mark.svg",
+  import.meta.url,
+);
+const SWARMBOOK_FAVICON_ASSET_URL = new URL(
+  "../../assets/favicon.ico",
+  import.meta.url,
+);
+const SWARMBOOK_HORIZONTAL_LOGO_ASSET_URL = new URL(
+  "../../assets/swarmbook-logo-horizontal.svg",
+  import.meta.url,
+);
 
 function issueMessage(error: {
   issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }>;
@@ -322,7 +334,7 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
 
   app.use("*", async (context, next) => {
     await next();
-    if (context.req.path.startsWith("/assets/")) {
+    if (context.req.path.startsWith("/assets/") || context.req.path === "/favicon.ico") {
       context.header("Cache-Control", "public, max-age=31536000, immutable");
     } else {
       context.header("Cache-Control", "no-store");
@@ -433,6 +445,7 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
     const path = context.req.path;
     if (
       path === "/health" ||
+      path === "/favicon.ico" ||
       path.startsWith("/assets/") ||
       path.startsWith("/api/") ||
       path === "/login" ||
@@ -462,6 +475,24 @@ export function createApp(service: SwarmbookService, options: AppOptions = {}) {
   app.get("/assets/force-graph-1.51.4.min.js", () =>
     new Response(Bun.file(FORCE_GRAPH_ASSET_URL), {
       headers: { "content-type": "text/javascript; charset=UTF-8" },
+    })
+  );
+
+  app.get("/assets/swarmbook-mark.svg", () =>
+    new Response(Bun.file(SWARMBOOK_MARK_ASSET_URL), {
+      headers: { "content-type": "image/svg+xml; charset=UTF-8" },
+    })
+  );
+
+  app.get("/favicon.ico", () =>
+    new Response(Bun.file(SWARMBOOK_FAVICON_ASSET_URL), {
+      headers: { "content-type": "image/x-icon" },
+    })
+  );
+
+  app.get("/assets/swarmbook-logo-horizontal.svg", () =>
+    new Response(Bun.file(SWARMBOOK_HORIZONTAL_LOGO_ASSET_URL), {
+      headers: { "content-type": "image/svg+xml; charset=UTF-8" },
     })
   );
 

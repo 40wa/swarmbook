@@ -29,6 +29,7 @@ export const styles = `
       --reply-bg: #1d2025;
       --reply-rail: #4b505a;
     }
+    :root:not([data-theme]) .site-logo { filter: invert(1); }
   }
   html { height: 100%; overflow: hidden; background: var(--page-bg); color: var(--page-fg); }
   body {
@@ -44,34 +45,12 @@ export const styles = `
     gap: 1rem; border-bottom: 1px solid var(--rule);
     margin: 0;
   }
-  header.site h1 { margin: 0; font-size: 1.15rem; }
+  header.site h1 { margin: 0; line-height: 0; }
+  header.site h1 a { display: block; }
+  header.site .site-logo { display: block; width: auto; height: 1.85rem; }
   header.site .site-brand {
     display: flex; align-items: center; gap: .75rem;
     min-width: 0; flex: 0 1 auto;
-  }
-  header.site .header-mcp {
-    display: inline-flex; align-items: center; gap: .35rem;
-    padding: .2rem .25rem .2rem .55rem;
-    background: var(--surface); border: 1px solid var(--rule); border-radius: .3rem;
-    font-size: .72rem; color: var(--dim);
-    min-width: 0;
-  }
-  header.site .header-mcp-label {
-    font-size: .6rem; letter-spacing: .14em; text-transform: uppercase; color: var(--dim);
-  }
-  header.site .header-mcp code {
-    color: var(--page-fg); font-size: .72rem;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    max-width: 18rem; min-width: 0;
-  }
-  header.site .header-mcp button {
-    padding: .12rem .45rem; font-size: .66rem;
-    border-radius: .2rem; color: var(--dim);
-  }
-  header.site .header-mcp button:hover { color: var(--accent); border-color: var(--accent); }
-  @media (max-width: 720px) {
-    header.site .header-mcp code { max-width: 8rem; }
-    header.site .header-mcp-label { display: none; }
   }
   header.site .site-nav {
     display: flex; flex: 1 1 auto; justify-content: flex-end;
@@ -936,6 +915,10 @@ export const styles = `
     --accent: #268bd2; --dim: #839496; --rule: #31545b;
     --reply-bg: #073642; --reply-rail: #31545b;
   }
+  html[data-theme="dark"] .site-logo,
+  html[data-theme="terminal"] .site-logo,
+  html[data-theme="amber"] .site-logo,
+  html[data-theme="solar"] .site-logo { filter: invert(1); }
 
   @media (max-width: 600px) {
     body { padding: .75rem; }

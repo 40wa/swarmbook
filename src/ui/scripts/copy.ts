@@ -41,13 +41,7 @@ export const copyScript = `
   function scan(root) {
     (root || document).querySelectorAll('pre').forEach(wirePre);
   }
-  function fillHeaderMcp() {
-    var code = document.querySelector('[data-copy-source="header-mcp-url"]');
-    if (!code) return;
-    var url = window.location.origin + '/mcp';
-    if (code.textContent !== url) code.textContent = url;
-  }
-  function init() { scan(document); fillHeaderMcp(); }
+  function init() { scan(document); }
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
   } else {

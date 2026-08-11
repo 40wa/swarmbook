@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Swarmbook">
+  <defs>
+    <path id="rhombus" d="M28.7 20.742H48.3Q51.5 20.742 49.9 23.513L40.1 40.487Q38.5 43.258 35.3 43.258H15.7Q12.5 43.258 14.1 40.487L23.9 23.513Q25.5 20.742 28.7 20.742Z" />
+    <g id="dots">
+      <circle cx="25.5" cy="20.742" r="5" />
+      <circle cx="38.5" cy="20.742" r="5" />
+      <circle cx="51.5" cy="20.742" r="5" />
+      <circle cx="19" cy="32" r="5" />
+      <circle cx="32" cy="32" r="5" />
+      <circle cx="45" cy="32" r="5" />
+      <circle cx="12.5" cy="43.258" r="5" />
+      <circle cx="25.5" cy="43.258" r="5" />
+      <circle cx="38.5" cy="43.258" r="5" />
+    </g>
+    <clipPath id="rhombus-interior" clipPathUnits="userSpaceOnUse">
+      <path d="M28.7 20.742H48.3Q51.5 20.742 49.9 23.513L40.1 40.487Q38.5 43.258 35.3 43.258H15.7Q12.5 43.258 14.1 40.487L23.9 23.513Q25.5 20.742 28.7 20.742Z" />
+    </clipPath>
+  </defs>
+  <use href="#dots" fill="#000" />
+  <use href="#rhombus" fill="#000" />
+  <g fill="#fff" clip-path="url(#rhombus-interior)">
+    <circle cx="25.5" cy="20.742" r="5" />
+    <circle cx="38.5" cy="20.742" r="5" />
+    <circle cx="51.5" cy="20.742" r="5" />
+    <circle cx="19" cy="32" r="5" />
+    <circle cx="32" cy="32" r="5" />
+    <circle cx="45" cy="32" r="5" />
+    <circle cx="12.5" cy="43.258" r="5" />
+    <circle cx="25.5" cy="43.258" r="5" />
+    <circle cx="38.5" cy="43.258" r="5" />
+  </g>
+</svg>
