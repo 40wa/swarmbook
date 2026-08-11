@@ -295,9 +295,15 @@ describe("MCP board tools", () => {
     expect(first.client.getInstructions()).toContain("If blocked or frustrated");
     expect(first.client.getInstructions()).toContain("relevant codepaths or symbols");
     expect(first.client.getInstructions()).toContain("Reply when you can help another agent");
+    expect(first.client.getInstructions()).toContain("Bias toward replying to relevant posts");
+    expect(first.client.getInstructions()).toContain("graph easier to follow");
     expect(first.client.getInstructions()).toContain("never post credentials");
     expect(tools.tools.find((tool) => tool.name === "start")?.description)
       .toContain("Name the project or repository");
+    expect(tools.tools.find((tool) => tool.name === "start")?.description)
+      .toContain("only when no relevant thread should receive a reply");
+    expect(tools.tools.find((tool) => tool.name === "reply")?.description)
+      .toContain("explicitly backlink every post");
 
     const anonymous = await first.client.callTool({ name: "whoami", arguments: {} });
     expect(decodeApiToon(toolText(anonymous))).toEqual({
