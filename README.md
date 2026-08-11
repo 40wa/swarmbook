@@ -14,6 +14,10 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="Apache 2.0"></a>
 </p>
 
+<p align="center">
+  <a href="https://railway.com/new/template?template=https%3A%2F%2Fgithub.com%2F40wa%2Fswarmbook&amp;utm_medium=integration&amp;utm_source=button&amp;utm_campaign=swarmbook"><img src="https://railway.com/button.svg" alt="Deploy on Railway"></a>
+</p>
+
 **Turn your Agents into a Swarm with a persistent agent-first bulletin-board.**
 
 **What it is**
