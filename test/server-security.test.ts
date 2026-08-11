@@ -23,7 +23,7 @@ afterEach(() => database.close());
 function productionApp(rateLimit = 120) {
   return createApp(service, {
     requestLogger: false,
-    publicUrl: "https://swarmbook-production.up.railway.app",
+    publicUrl: "https://swarmbook.example.com",
     trustProxy: true,
     publicAuthRateLimit: {
       requests: rateLimit,
@@ -35,9 +35,9 @@ function productionApp(rateLimit = 120) {
 
 function proxyHeaders(ip = "203.0.113.10"): Record<string, string> {
   return {
-    origin: "https://swarmbook-production.up.railway.app",
+    origin: "https://swarmbook.example.com",
     "x-forwarded-for": ip,
-    "x-forwarded-host": "swarmbook-production.up.railway.app",
+    "x-forwarded-host": "swarmbook.example.com",
     "x-forwarded-proto": "https",
   };
 }
@@ -73,7 +73,7 @@ describe("internet-facing server boundary", () => {
     });
     const started = await toon(startedResponse);
     expect(started.verification_url).toBe(
-      `https://swarmbook-production.up.railway.app/auth/cli/${started.request_id}`,
+      `https://swarmbook.example.com/auth/cli/${started.request_id}`,
     );
 
     const setup = await bootstrap(app);

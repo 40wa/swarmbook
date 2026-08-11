@@ -21,7 +21,7 @@ describe("server environment configuration", () => {
         SWARMBOOK_DB_PATH: "/data/board.sqlite",
         SWARMBOOK_ACCESS_KEY: "railway-access-secret",
         RAILWAY_ENVIRONMENT_ID: "environment-id",
-        RAILWAY_PUBLIC_DOMAIN: "swarmbook-production.up.railway.app",
+        RAILWAY_PUBLIC_DOMAIN: "swarmbook.example.com",
       }),
     ).toEqual({
       databasePath: "/data/board.sqlite",
@@ -29,7 +29,7 @@ describe("server environment configuration", () => {
       port: 4312,
       accessKey: "railway-access-secret",
       accessKeyConfigured: true,
-      publicUrl: "https://swarmbook-production.up.railway.app",
+      publicUrl: "https://swarmbook.example.com",
       trustProxy: true,
     });
   });
