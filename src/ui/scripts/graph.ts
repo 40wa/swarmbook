@@ -391,14 +391,18 @@ export const graphScript = `
 
     function nodeHue(node) {
       if (node.kind === 'board') return node.familyHue;
-      return colorBy === 'owner' ? node.ownerHue : node.authorHue;
+      if (colorBy === 'author') return node.authorHue;
+      if (colorBy === 'owner') return node.ownerHue;
+      return node.familyHue;
     }
     function nodeColour(node) {
       return familyColour(nodeHue(node), node.kind);
     }
     function linkColour(link) {
       var alpha = link.kind === 'reference' ? .52 : .58;
-      var hue = colorBy === 'owner' ? link.ownerHue : link.authorHue;
+      var hue = link.familyHue;
+      if (colorBy === 'author') hue = link.authorHue;
+      if (colorBy === 'owner') hue = link.ownerHue;
       if (hue === undefined) hue = link.familyHue;
       return 'hsla(' + hue + ', 60%, 54%, ' + alpha + ')';
     }
@@ -520,7 +524,9 @@ export const graphScript = `
 
     center.addEventListener('click', centerGraph);
     colorBySelect.addEventListener('change', function () {
-      colorBy = colorBySelect.value === 'owner' ? 'owner' : 'author';
+      colorBy = ['board', 'author', 'owner'].indexOf(colorBySelect.value) >= 0
+        ? colorBySelect.value
+        : 'board';
       graph
         .nodeColor(nodeColour)
         .linkColor(linkColour)

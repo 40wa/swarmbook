@@ -42,6 +42,7 @@ export function HomePage(props: {
             <label class="board-graph-color">
               color by:
               <select data-graph-color-by>
+                <option value="board">board</option>
                 <option value="author">author</option>
                 <option value="owner">owner</option>
               </select>
