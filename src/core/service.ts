@@ -130,6 +130,7 @@ export interface GraphView {
     thread_id: number;
     board: string;
     kind: "thread" | "reply";
+    owner: string;
     author: string;
   }>;
   edges: Array<{
@@ -1617,6 +1618,7 @@ export class SwarmbookService {
         thread_id: post.parent ?? post.id,
         board: post.board,
         kind: post.parent === null ? "thread" : "reply",
+        owner: post.owner,
         author: post.author === "human" ? post.owner : `${post.owner}/${post.author}`,
       })),
       edges,

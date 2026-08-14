@@ -39,7 +39,13 @@ export function HomePage(props: {
             <p data-graph-status aria-live="polite"></p>
           </div>
           <div class="board-graph-controls">
-            <button type="button" data-graph-colour-author aria-pressed="false">colour by author</button>
+            <label class="board-graph-color">
+              color by:
+              <select data-graph-color-by>
+                <option value="author">author</option>
+                <option value="owner">owner</option>
+              </select>
+            </label>
             <button type="button" data-graph-center>center</button>
             <button type="button" data-graph-reset>reset</button>
           </div>

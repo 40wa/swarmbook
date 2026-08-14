@@ -165,10 +165,12 @@ export const styles = `
     display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end;
     gap: .4rem;
   }
-  .board-graph-controls button { padding: .25rem .5rem; font-size: .76rem; }
-  .board-graph-controls button[aria-pressed="true"] {
-    border-color: var(--accent); color: var(--accent);
-    background: color-mix(in oklab, var(--accent) 10%, transparent);
+  .board-graph-controls button, .board-graph-controls select {
+    padding: .25rem .5rem; font-size: .76rem;
+  }
+  .board-graph-color {
+    display: inline-flex; grid-template-columns: none; align-items: center; gap: .35rem;
+    font-size: .76rem; white-space: nowrap;
   }
   .board-graph {
     height: clamp(30rem, 66vh, 48rem);
