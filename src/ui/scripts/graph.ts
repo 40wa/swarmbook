@@ -50,6 +50,15 @@ export const graphScript = `
     return 'hsla(' + hue + ', 58%, 64%, .82)';
   }
 
+  function authorHue(author) {
+    var hash = 2166136261;
+    for (var index = 0; index < author.length; index += 1) {
+      hash ^= author.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0) % 360;
+  }
+
   function renderRadius(node) {
     if (node.kind === 'board') return 9;
     if (node.kind === 'thread') return 4.5;
@@ -254,6 +263,8 @@ export const graphScript = `
         threadId: post.thread_id,
         kind: post.kind,
         board: post.board,
+        author: post.author,
+        authorHue: authorHue(post.author),
         threadSize: threadSizes[post.thread_id] || 1,
         familyHue: family.hue,
         url: '/boards/' + encodeURIComponent(post.board) + '/threads/' + post.thread_id + '#post-' + post.id
@@ -269,6 +280,8 @@ export const graphScript = `
         threadId: post.thread_id,
         kind: post.kind,
         board: post.board,
+        author: post.author,
+        authorHue: authorHue(post.author),
         familyHue: family.hue,
         url: '/boards/' + encodeURIComponent(post.board) + '/threads/' + post.thread_id + '#post-' + post.id
       });
@@ -280,12 +293,15 @@ export const graphScript = `
       nodes: nodes,
       links: payload.edges.map(function (edge, index) {
         var sourceNode = nodesById[edge.source];
+        var targetNode = nodesById[edge.target];
+        var authorNode = edge.kind === 'reference' ? sourceNode : targetNode;
         return {
           id: 'edge:' + index,
           source: edge.source,
           target: edge.target,
           kind: edge.kind,
-          familyHue: sourceNode ? sourceNode.familyHue : 210
+          familyHue: sourceNode ? sourceNode.familyHue : 210,
+          authorHue: authorNode && authorNode.authorHue
         };
       })
     };
@@ -360,18 +376,25 @@ export const graphScript = `
     graphContainer = container;
     var shell = container.closest('.board-graph-shell');
     var status = shell.querySelector('[data-graph-status]');
+    var colourAuthor = shell.querySelector('[data-graph-colour-author]');
     var center = shell.querySelector('[data-graph-center]');
     var reset = shell.querySelector('[data-graph-reset]');
     var palette = colours();
+    var colourByAuthor = false;
     var data = graphData(payload);
     randomiseHierarchy(data);
 
+    function nodeHue(node) {
+      if (colourByAuthor && node.kind !== 'board') return node.authorHue;
+      return node.familyHue;
+    }
     function nodeColour(node) {
-      return familyColour(node.familyHue, node.kind);
+      return familyColour(nodeHue(node), node.kind);
     }
     function linkColour(link) {
       var alpha = link.kind === 'reference' ? .52 : .58;
-      return 'hsla(' + link.familyHue + ', 60%, 54%, ' + alpha + ')';
+      var hue = colourByAuthor && link.authorHue !== undefined ? link.authorHue : link.familyHue;
+      return 'hsla(' + hue + ', 60%, 54%, ' + alpha + ')';
     }
     function drawNode(node, context, globalScale) {
       var radius = renderRadius(node);
@@ -390,7 +413,7 @@ export const graphScript = `
       context.arc(node.x, node.y, radius, 0, Math.PI * 2);
       context.fill();
       context.shadowBlur = 0;
-      context.strokeStyle = 'hsla(' + node.familyHue + ', 85%, 82%, .88)';
+      context.strokeStyle = 'hsla(' + nodeHue(node) + ', 85%, 82%, .88)';
       context.lineWidth = (node.kind === 'board' ? 1.6 : .8) / globalScale;
       context.stroke();
       if (node.kind === 'board') {
@@ -469,7 +492,7 @@ export const graphScript = `
         if (node.kind === 'board') {
           return '/' + node.board + '/ · ' + node.postCount + ' posts<br>' + node.description;
         }
-        return 'No.' + node.postId + ' · ' + node.kind + ' · /' + node.board + '/';
+        return 'No.' + node.postId + ' · ' + node.kind + ' · ' + node.author + ' · /' + node.board + '/';
       })
       .linkColor(linkColour)
       .linkCanvasObjectMode(function () { return 'replace'; })
@@ -490,10 +513,19 @@ export const graphScript = `
     status.textContent = '';
 
     center.addEventListener('click', centerGraph);
+    colourAuthor.addEventListener('click', function () {
+      colourByAuthor = !colourByAuthor;
+      colourAuthor.setAttribute('aria-pressed', colourByAuthor ? 'true' : 'false');
+      graph
+        .nodeColor(nodeColour)
+        .linkColor(linkColour)
+        .refresh();
+    });
     reset.addEventListener('click', function () {
       randomiseHierarchy(data);
       graph.graphData(data);
       graph.d3ReheatSimulation();
+      centerGraph();
     });
 
     resizeObserver = new ResizeObserver(sizeGraph);
