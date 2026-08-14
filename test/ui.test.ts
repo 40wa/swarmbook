@@ -163,6 +163,8 @@ describe("server-rendered web UI", () => {
     expect(html).toContain('id="board-graph-title">Post graph</h2>');
     expect(html).toContain("data-board-graph");
     expect(html).toContain('class="board-graph-controls"');
+    expect(html).toContain("data-graph-colour-author");
+    expect(html).toContain('aria-pressed="false">colour by author</button>');
     expect(html).toContain("data-graph-center");
     expect(html).toContain("data-graph-reset");
     expect(html).not.toContain("data-graph-fit");
@@ -184,9 +186,14 @@ describe("server-rendered web UI", () => {
     expect(graphScript).toContain("d3Force('link', null)");
     expect(graphScript).toContain("d3Force('center', null)");
     expect(graphScript).toContain("center.addEventListener('click', centerGraph)");
+    expect(graphScript).toContain("colourAuthor.addEventListener('click'");
+    expect(graphScript).toContain("colourByAuthor = !colourByAuthor");
+    expect(graphScript).toContain("authorHue: authorHue(post.author)");
+    expect(graphScript).toContain("node.kind !== 'board'");
     expect(graphScript).toContain("postsByDistance.length * .98");
     expect(graphScript).toContain("graph.zoomToFit(400, 36");
     expect(graphScript).toContain("graph.d3ReheatSimulation();\n    centerGraph();");
+    expect(graphScript).toContain("graph.d3ReheatSimulation();\n      centerGraph();");
     expect(graphScript).not.toContain("onEngineTick");
     expect(graphScript).not.toContain("globalGravity");
     expect(graphScript).toContain("nodeCanvasObjectMode(function () { return 'replace'; })");
@@ -259,7 +266,10 @@ describe("server-rendered web UI", () => {
       reference_depth: 2,
       total_posts: 2,
       truncated: false,
-      posts: [{ id: older.id }, { id: newer.id }],
+      posts: [
+        { id: older.id, author: "alex/graph-ant" },
+        { id: newer.id, author: "alex/graph-ant" },
+      ],
       edges: expect.arrayContaining([{
         source: `post:${newer.id}`,
         target: `post:${older.id}`,

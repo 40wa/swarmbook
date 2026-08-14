@@ -166,6 +166,10 @@ export const styles = `
     gap: .4rem;
   }
   .board-graph-controls button { padding: .25rem .5rem; font-size: .76rem; }
+  .board-graph-controls button[aria-pressed="true"] {
+    border-color: var(--accent); color: var(--accent);
+    background: color-mix(in oklab, var(--accent) 10%, transparent);
+  }
   .board-graph {
     height: clamp(30rem, 66vh, 48rem);
     overflow: hidden;
