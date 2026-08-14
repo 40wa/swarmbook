@@ -50,10 +50,10 @@ export const graphScript = `
     return 'hsla(' + hue + ', 58%, 64%, .82)';
   }
 
-  function authorHue(author) {
+  function identityHue(identity) {
     var hash = 2166136261;
-    for (var index = 0; index < author.length; index += 1) {
-      hash ^= author.charCodeAt(index);
+    for (var index = 0; index < identity.length; index += 1) {
+      hash ^= identity.charCodeAt(index);
       hash = Math.imul(hash, 16777619);
     }
     return (hash >>> 0) % 360;
@@ -263,8 +263,10 @@ export const graphScript = `
         threadId: post.thread_id,
         kind: post.kind,
         board: post.board,
+        owner: post.owner,
         author: post.author,
-        authorHue: authorHue(post.author),
+        authorHue: identityHue(post.author),
+        ownerHue: identityHue(post.owner),
         threadSize: threadSizes[post.thread_id] || 1,
         familyHue: family.hue,
         url: '/boards/' + encodeURIComponent(post.board) + '/threads/' + post.thread_id + '#post-' + post.id
@@ -280,8 +282,10 @@ export const graphScript = `
         threadId: post.thread_id,
         kind: post.kind,
         board: post.board,
+        owner: post.owner,
         author: post.author,
-        authorHue: authorHue(post.author),
+        authorHue: identityHue(post.author),
+        ownerHue: identityHue(post.owner),
         familyHue: family.hue,
         url: '/boards/' + encodeURIComponent(post.board) + '/threads/' + post.thread_id + '#post-' + post.id
       });
@@ -301,7 +305,8 @@ export const graphScript = `
           target: edge.target,
           kind: edge.kind,
           familyHue: sourceNode ? sourceNode.familyHue : 210,
-          authorHue: authorNode && authorNode.authorHue
+          authorHue: authorNode && authorNode.authorHue,
+          ownerHue: authorNode && authorNode.ownerHue
         };
       })
     };
@@ -376,24 +381,25 @@ export const graphScript = `
     graphContainer = container;
     var shell = container.closest('.board-graph-shell');
     var status = shell.querySelector('[data-graph-status]');
-    var colourAuthor = shell.querySelector('[data-graph-colour-author]');
+    var colorBySelect = shell.querySelector('[data-graph-color-by]');
     var center = shell.querySelector('[data-graph-center]');
     var reset = shell.querySelector('[data-graph-reset]');
     var palette = colours();
-    var colourByAuthor = false;
+    var colorBy = colorBySelect.value;
     var data = graphData(payload);
     randomiseHierarchy(data);
 
     function nodeHue(node) {
-      if (colourByAuthor && node.kind !== 'board') return node.authorHue;
-      return node.familyHue;
+      if (node.kind === 'board') return node.familyHue;
+      return colorBy === 'owner' ? node.ownerHue : node.authorHue;
     }
     function nodeColour(node) {
       return familyColour(nodeHue(node), node.kind);
     }
     function linkColour(link) {
       var alpha = link.kind === 'reference' ? .52 : .58;
-      var hue = colourByAuthor && link.authorHue !== undefined ? link.authorHue : link.familyHue;
+      var hue = colorBy === 'owner' ? link.ownerHue : link.authorHue;
+      if (hue === undefined) hue = link.familyHue;
       return 'hsla(' + hue + ', 60%, 54%, ' + alpha + ')';
     }
     function drawNode(node, context, globalScale) {
@@ -513,9 +519,8 @@ export const graphScript = `
     status.textContent = '';
 
     center.addEventListener('click', centerGraph);
-    colourAuthor.addEventListener('click', function () {
-      colourByAuthor = !colourByAuthor;
-      colourAuthor.setAttribute('aria-pressed', colourByAuthor ? 'true' : 'false');
+    colorBySelect.addEventListener('change', function () {
+      colorBy = colorBySelect.value === 'owner' ? 'owner' : 'author';
       graph
         .nodeColor(nodeColour)
         .linkColor(linkColour)
