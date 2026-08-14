@@ -165,8 +165,12 @@ describe("server-rendered web UI", () => {
     expect(html).toContain('class="board-graph-controls"');
     expect(html).toContain('class="board-graph-color">color by:');
     expect(html).toContain("data-graph-color-by");
+    expect(html).toContain('<option value="board">board</option>');
     expect(html).toContain('<option value="author">author</option>');
     expect(html).toContain('<option value="owner">owner</option>');
+    expect(html.indexOf('<option value="board">')).toBeLessThan(
+      html.indexOf('<option value="author">'),
+    );
     expect(html).toContain("data-graph-center");
     expect(html).toContain("data-graph-reset");
     expect(html).not.toContain("data-graph-fit");
@@ -189,7 +193,10 @@ describe("server-rendered web UI", () => {
     expect(graphScript).toContain("d3Force('center', null)");
     expect(graphScript).toContain("center.addEventListener('click', centerGraph)");
     expect(graphScript).toContain("colorBySelect.addEventListener('change'");
-    expect(graphScript).toContain("colorBy === 'owner' ? node.ownerHue : node.authorHue");
+    expect(graphScript).toContain("if (colorBy === 'author') return node.authorHue");
+    expect(graphScript).toContain("if (colorBy === 'owner') return node.ownerHue");
+    expect(graphScript).toContain("return node.familyHue");
+    expect(graphScript).toContain("['board', 'author', 'owner'].indexOf(colorBySelect.value)");
     expect(graphScript).toContain("authorHue: identityHue(post.author)");
     expect(graphScript).toContain("ownerHue: identityHue(post.owner)");
     expect(graphScript).toContain("postsByDistance.length * .98");
