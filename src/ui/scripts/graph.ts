@@ -119,12 +119,14 @@ export const graphScript = `
     };
   }
 
-  // Gource-style layout: board-family anchors, surface-to-surface hierarchy
-  // springs, outward branch continuation and overlap-only packing.
+  // Gource-style layout: seed root nodes once, use a surface-to-surface parent
+  // pull, continue branches outwards and resolve overlap across every node.
+  // Root nodes deliberately have no force anchor; their seed is not a tether.
   function gourceHierarchyForce(links) {
     var nodes = [];
     var topology = structuralTopology(nodes, links);
     var nodeStates = [];
+    var cellSize = 96;
 
     function force(alpha) {
       if (nodes.length === 0) return;
@@ -133,53 +135,41 @@ export const graphScript = `
       for (index = 0; index < nodeStates.length; index += 1) {
         var state = nodeStates[index];
         var node = state.node;
-        if (!state.parent && node.kind !== 'board') continue;
-        var anchorX = state.parent ? state.parent.x :
-          typeof node.clusterX === 'number' ? node.clusterX : 0;
-        var anchorY = state.parent ? state.parent.y :
-          typeof node.clusterY === 'number' ? node.clusterY : 0;
-        var dx = anchorX - node.x;
-        var dy = anchorY - node.y;
+        if (!state.parent) continue;
+        var dx = state.parent.x - node.x;
+        var dy = state.parent.y - node.y;
         var distanceSquared = dx * dx + dy * dy;
         var distance = Math.sqrt(distanceSquared);
-        if (node.kind === 'board' && distance < .001) continue;
         if (distance < .001) {
           dx = ((node.index * 17) % 11 - 5) * .01 || .01;
           dy = ((node.index * 23) % 13 - 6) * .01 || .01;
           distance = Math.sqrt(dx * dx + dy * dy);
         }
-        var anchorRadius = state.parent ? state.parentRadius : 0;
-        var gap = node.kind === 'board' ? 0 : state.relation === 'contains' ? 18 : 10;
-        var restDistance = anchorRadius + state.radius + gap;
-        var springStrength = node.kind === 'board' ? .09 : state.relation === 'contains' ? .075 : .13;
-        var spring = (distance - restDistance) * springStrength * alpha;
+        // This is Gource's distance-to-parent force: node surfaces, rather than
+        // their centres, settle together. collisionRadius already includes the
+        // visual padding, so an extra arbitrary spring gap is unnecessary.
+        var restDistance = state.parentRadius + state.radius;
+        var spring = (distance - restDistance) * .12 * alpha;
         node.vx += dx / distance * spring;
         node.vy += dy / distance * spring;
 
-        if (!state.parent) continue;
-        var grandX = state.grandparent ? state.grandparent.x :
-          typeof state.parent.clusterX === 'number' ? state.parent.clusterX : 0;
-        var grandY = state.grandparent ? state.grandparent.y :
-          typeof state.parent.clusterY === 'number' ? state.parent.clusterY : 0;
-        var branchX = state.parent.x - grandX;
-        var branchY = state.parent.y - grandY;
+        if (!state.grandparent) continue;
+        var branchX = state.parent.x - state.grandparent.x;
+        var branchY = state.parent.y - state.grandparent.y;
         var branchLength = Math.sqrt(branchX * branchX + branchY * branchY);
         if (branchLength < .001) continue;
         var targetX = state.parent.x + branchX / branchLength * restDistance;
         var targetY = state.parent.y + branchY / branchLength * restDistance;
-        var continuation = state.relation === 'reply' ? .038 : .022;
-        node.vx += (targetX - node.x) * continuation * alpha;
-        node.vy += (targetY - node.y) * continuation * alpha;
+        // Gource applies this continuation at one tenth of its parent pull.
+        node.vx += (targetX - node.x) * .012 * alpha;
+        node.vy += (targetY - node.y) * .012 * alpha;
       }
 
-      // Pack structural board/thread nodes only. Replies behave like Gource file
-      // leaves: their hierarchy springs place them without a global collision body.
-      // Cached radii and squared-distance rejection keep the spatial hash cheap.
-      var cellSize = 96;
+      // Gource resolves overlap for all hierarchy nodes. A spatial hash, cached
+      // radii and squared-distance rejection avoid an O(nodes^2) browser loop.
       var cells = Object.create(null);
       for (index = 0; index < nodeStates.length; index += 1) {
         var cellState = nodeStates[index];
-        if (!cellState.collides) continue;
         var cellNode = cellState.node;
         var cellX = Math.floor(cellNode.x / cellSize);
         var cellY = Math.floor(cellNode.y / cellSize);
@@ -188,7 +178,6 @@ export const graphScript = `
       }
       for (index = 0; index < nodeStates.length; index += 1) {
         var nodeState = nodeStates[index];
-        if (!nodeState.collides) continue;
         var packedNode = nodeState.node;
         var packedCellX = Math.floor(packedNode.x / cellSize);
         var packedCellY = Math.floor(packedNode.y / cellSize);
@@ -234,13 +223,14 @@ export const graphScript = `
           node: node,
           parent: parent,
           grandparent: parent && topology.parentById[parent.id],
-          relation: topology.relationById[node.id],
           radius: collisionRadius(node),
           parentRadius: parent ? collisionRadius(parent) : 0,
-          inertia: inertia(node),
-          collides: node.kind === 'board' || node.kind === 'thread'
+          inertia: inertia(node)
         };
       });
+      cellSize = nodeStates.reduce(function (size, state) {
+        return Math.max(size, state.radius * 2 + 5);
+      }, 16);
     };
     return force;
   }
@@ -395,8 +385,6 @@ export const graphScript = `
       var node = layout.node;
       node.x = Math.cos(angle) * distance;
       node.y = Math.sin(angle) * distance;
-      node.clusterX = node.x;
-      node.clusterY = node.y;
       placed[node.id] = true;
       boardCursor += arc;
     });
@@ -416,7 +404,7 @@ export const graphScript = `
           var siblings = childrenByParent[parent.id] || [node];
           var siblingIndex = siblingIndexById[node.id] || 0;
           var familyDirection = boards.length > 1
-            ? Math.atan2(parent.clusterY, parent.clusterX)
+            ? Math.atan2(parent.y, parent.x)
             : Math.random() * Math.PI * 2;
           var familySpan = boards.length > 1
             ? Math.min(Math.PI * .9, Math.PI * 2 / boards.length * .72)
@@ -488,18 +476,58 @@ export const graphScript = `
       if (hue === undefined) hue = link.familyHue;
       return 'hsla(' + hue + ', 60%, 54%, ' + alpha + ')';
     }
-    function drawBoardLabel(node, context, globalScale) {
-      if (node.kind !== 'board') return;
+    function drawNode(node, context, globalScale) {
       var radius = renderRadius(node);
-      var fontSize = 11 / globalScale;
+      var colour = nodeColour(node);
       context.save();
-      context.font = '700 ' + fontSize + 'px ui-monospace, SFMono-Regular, Menlo, monospace';
-      context.textAlign = 'left';
-      context.textBaseline = 'middle';
-      context.fillStyle = palette.text;
-      context.shadowColor = palette.page;
-      context.shadowBlur = 4 / globalScale;
-      context.fillText('/' + node.board + '/', node.x + radius + 5 / globalScale, node.y);
+      context.shadowColor = colour;
+      context.shadowBlur = (node.kind === 'board' ? 19 : node.kind === 'thread' ? 12 : 8) / globalScale;
+      context.globalAlpha = node.kind === 'reply' ? .2 : .26;
+      context.fillStyle = colour;
+      context.beginPath();
+      context.arc(node.x, node.y, radius * 1.8, 0, Math.PI * 2);
+      context.fill();
+      context.globalAlpha = 1;
+      context.shadowBlur = (node.kind === 'board' ? 10 : 6) / globalScale;
+      context.beginPath();
+      context.arc(node.x, node.y, radius, 0, Math.PI * 2);
+      context.fill();
+      context.shadowBlur = 0;
+      context.strokeStyle = 'hsla(' + nodeHue(node) + ', 85%, 82%, .88)';
+      context.lineWidth = (node.kind === 'board' ? 1.6 : .8) / globalScale;
+      context.stroke();
+      if (node.kind === 'board') {
+        var fontSize = 11 / globalScale;
+        context.font = '700 ' + fontSize + 'px ui-monospace, SFMono-Regular, Menlo, monospace';
+        context.textAlign = 'left';
+        context.textBaseline = 'middle';
+        context.fillStyle = palette.text;
+        context.shadowColor = palette.page;
+        context.shadowBlur = 4 / globalScale;
+        context.fillText('/' + node.board + '/', node.x + radius + 5 / globalScale, node.y);
+      }
+      context.restore();
+    }
+    function paintNodePointer(node, colour, context) {
+      context.fillStyle = colour;
+      context.beginPath();
+      context.arc(node.x, node.y, Math.max(6, renderRadius(node) + 3), 0, Math.PI * 2);
+      context.fill();
+    }
+    function drawLink(link, context, globalScale) {
+      if (typeof link.source !== 'object' || typeof link.target !== 'object') return;
+      var colour = linkColour(link);
+      context.save();
+      context.strokeStyle = colour;
+      context.globalAlpha = link.kind === 'reference' ? .78 : .86;
+      context.lineWidth = (link.kind === 'contains' ? 1.4 : link.kind === 'reference' ? .9 : .8) / globalScale;
+      context.shadowColor = colour;
+      context.shadowBlur = (link.kind === 'reference' ? 5 : 7) / globalScale;
+      if (link.kind === 'reference') context.setLineDash([4 / globalScale, 5 / globalScale]);
+      context.beginPath();
+      context.moveTo(link.source.x, link.source.y);
+      context.lineTo(link.target.x, link.target.y);
+      context.stroke();
       context.restore();
     }
     function sizeGraph() {
@@ -537,8 +565,9 @@ export const graphScript = `
       .nodeRelSize(1)
       .nodeVal(function (node) { return renderRadius(node) * renderRadius(node); })
       .nodeColor(nodeColour)
-      .nodeCanvasObjectMode(function (node) { return node.kind === 'board' ? 'after' : undefined; })
-      .nodeCanvasObject(drawBoardLabel)
+      .nodeCanvasObjectMode(function () { return 'replace'; })
+      .nodeCanvasObject(drawNode)
+      .nodePointerAreaPaint(paintNodePointer)
       .nodeLabel(function (node) {
         if (node.kind === 'board') {
           return '/' + node.board + '/ · ' + node.postCount + ' posts<br>' + node.description;
@@ -546,18 +575,16 @@ export const graphScript = `
         return 'No.' + node.postId + ' · ' + node.kind + ' · ' + node.author + ' · /' + node.board + '/';
       })
       .linkColor(linkColour)
-      .linkWidth(function (link) {
-        return link.kind === 'contains' ? 1.4 : link.kind === 'reference' ? .9 : .8;
-      })
-      .linkLineDash(function (link) { return link.kind === 'reference' ? [4, 5] : null; })
+      .linkCanvasObjectMode(function () { return 'replace'; })
+      .linkCanvasObject(drawLink)
       .onNodeClick(function (node) { location.assign(node.url); })
       .onNodeDragEnd(function () { graph.d3ReheatSimulation(); })
       .autoPauseRedraw(true)
-      .cooldownTicks(140)
-      .cooldownTime(3500)
-      .d3AlphaMin(.015)
-      .d3AlphaDecay(.04)
-      .d3VelocityDecay(.72);
+      .cooldownTicks(Infinity)
+      .cooldownTime(Infinity)
+      .d3AlphaMin(0)
+      .d3AlphaDecay(0)
+      .d3VelocityDecay(.78);
 
     graph.d3Force('charge', null);
     graph.d3Force('link', null);
