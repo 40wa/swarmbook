@@ -191,6 +191,11 @@ describe("server-rendered web UI", () => {
     expect(graphScript).toContain("d3Force('charge', null)");
     expect(graphScript).toContain("d3Force('link', null)");
     expect(graphScript).toContain("d3Force('center', null)");
+    expect(html).toContain("data-graph-physics");
+    expect(html).toContain('aria-label="Pause physics"');
+    expect(html).toContain(">⏸</button>");
+    expect(graphScript).toContain("physics.textContent = physicsEnabled ? '⏸' : '▶'");
+    expect(graphScript).toContain("setPhysicsEnabled(graph, data.nodes, physicsEnabled)");
     expect(graphScript).toContain("center.addEventListener('click', centerGraph)");
     expect(graphScript).toContain("colorBySelect.addEventListener('change'");
     expect(graphScript).toContain("if (colorBy === 'author') return node.authorHue");
@@ -224,6 +229,36 @@ describe("server-rendered web UI", () => {
     expect(graphScript).toContain("onNodeClick(function (node) { location.assign(node.url); })");
     expect(graphScript).not.toContain("post.title");
     expect(graphScript).not.toContain("post.preview");
+
+    const physicsSourceEnd = graphScript.indexOf("  function render(container");
+    const physicsControl = {} as {
+      set: (
+        instance: { cooldownTicks(value: number): unknown; d3ReheatSimulation(): unknown },
+        nodes: Array<{ vx: number; vy: number }>,
+        enabled: boolean,
+      ) => void;
+    };
+    new Function(
+      "physicsControl",
+      `${graphScript.slice(0, physicsSourceEnd)}physicsControl.set = setPhysicsEnabled;})();`,
+    )(physicsControl);
+    const physicsCalls: Array<number | string> = [];
+    const physicsGraph = {
+      cooldownTicks(value: number) {
+        physicsCalls.push(value);
+        return this;
+      },
+      d3ReheatSimulation() {
+        physicsCalls.push("reheat");
+        return this;
+      },
+    };
+    const movingNodes = [{ vx: 4, vy: -2 }];
+    physicsControl.set(physicsGraph, movingNodes, false);
+    expect(movingNodes[0]).toEqual({ vx: 0, vy: 0 });
+    expect(physicsCalls).toEqual([0, "reheat"]);
+    physicsControl.set(physicsGraph, movingNodes, true);
+    expect(physicsCalls).toEqual([0, "reheat", Infinity, "reheat"]);
 
     const forceSourceEnd = graphScript.indexOf("  function graphData");
     const exposed = {} as {

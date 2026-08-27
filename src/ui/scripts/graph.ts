@@ -375,6 +375,17 @@ export const graphScript = `
     });
   }
 
+  function setPhysicsEnabled(instance, nodes, enabled) {
+    if (!enabled) {
+      nodes.forEach(function (node) {
+        node.vx = 0;
+        node.vy = 0;
+      });
+    }
+    instance.cooldownTicks(enabled ? Infinity : 0);
+    instance.d3ReheatSimulation();
+  }
+
   function render(container, payload, ForceGraph) {
     if (!document.documentElement.contains(container)) return;
     destroyGraph();
@@ -382,10 +393,12 @@ export const graphScript = `
     var shell = container.closest('.board-graph-shell');
     var status = shell.querySelector('[data-graph-status]');
     var colorBySelect = shell.querySelector('[data-graph-color-by]');
+    var physics = shell.querySelector('[data-graph-physics]');
     var center = shell.querySelector('[data-graph-center]');
     var reset = shell.querySelector('[data-graph-reset]');
     var palette = colours();
     var colorBy = colorBySelect.value;
+    var physicsEnabled = true;
     var data = graphData(payload);
     randomiseHierarchy(data);
 
@@ -522,6 +535,13 @@ export const graphScript = `
     centerGraph();
     status.textContent = '';
 
+    physics.addEventListener('click', function () {
+      physicsEnabled = !physicsEnabled;
+      setPhysicsEnabled(graph, data.nodes, physicsEnabled);
+      physics.textContent = physicsEnabled ? '⏸' : '▶';
+      physics.setAttribute('aria-label', physicsEnabled ? 'Pause physics' : 'Play physics');
+      physics.setAttribute('title', physicsEnabled ? 'Pause physics' : 'Play physics');
+    });
     center.addEventListener('click', centerGraph);
     colorBySelect.addEventListener('change', function () {
       colorBy = ['board', 'author', 'owner'].indexOf(colorBySelect.value) >= 0

@@ -168,6 +168,9 @@ export const styles = `
   .board-graph-controls button, .board-graph-controls select {
     padding: .25rem .5rem; font-size: .76rem;
   }
+  .board-graph-controls [data-graph-physics] {
+    width: 2rem; padding-inline: 0; line-height: 1;
+  }
   .board-graph-color {
     display: inline-flex; grid-template-columns: none; align-items: center; gap: .35rem;
     font-size: .76rem; white-space: nowrap;
