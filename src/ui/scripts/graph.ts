@@ -119,118 +119,114 @@ export const graphScript = `
     };
   }
 
-  // Gource-style layout: seed root nodes once, use a surface-to-surface parent
-  // pull, continue branches outwards and resolve overlap across every node.
-  // Root nodes deliberately have no force anchor; their seed is not a tether.
+  // Gource-style layout: an invisible repository root, surface-to-surface
+  // hierarchy springs, outward branch continuation and overlap-only packing.
   function gourceHierarchyForce(links) {
     var nodes = [];
     var topology = structuralTopology(nodes, links);
-    var nodeStates = [];
-    var cellSize = 96;
 
     function force(alpha) {
       if (nodes.length === 0) return;
-      var index;
+      var rootRadius = virtualRootRadius(nodes);
+      var root = { id: 'virtual-root', x: 0, y: 0, kind: 'root' };
 
-      for (index = 0; index < nodeStates.length; index += 1) {
-        var state = nodeStates[index];
-        var node = state.node;
-        if (!state.parent) continue;
-        var dx = state.parent.x - node.x;
-        var dy = state.parent.y - node.y;
-        var distanceSquared = dx * dx + dy * dy;
-        var distance = Math.sqrt(distanceSquared);
+      nodes.forEach(function (node) {
+        var parent = topology.parentById[node.id];
+        if (!parent && node.kind !== 'board') return;
+        var anchor = parent || root;
+        var dx = anchor.x - node.x;
+        var dy = anchor.y - node.y;
+        var distance = Math.hypot(dx, dy);
         if (distance < .001) {
           dx = ((node.index * 17) % 11 - 5) * .01 || .01;
           dy = ((node.index * 23) % 13 - 6) * .01 || .01;
-          distance = Math.sqrt(dx * dx + dy * dy);
+          distance = Math.hypot(dx, dy);
         }
-        // This is Gource's distance-to-parent force: node surfaces, rather than
-        // their centres, settle together. collisionRadius already includes the
-        // visual padding, so an extra arbitrary spring gap is unnecessary.
-        var restDistance = state.parentRadius + state.radius;
-        var spring = (distance - restDistance) * .12 * alpha;
+        var anchorRadius = parent ? collisionRadius(parent) : rootRadius;
+        var gap = node.kind === 'board' ? 12 : topology.relationById[node.id] === 'contains' ? 18 : 10;
+        var restDistance = anchorRadius + collisionRadius(node) + gap;
+        var springStrength = node.kind === 'board' ? .035 : topology.relationById[node.id] === 'contains' ? .075 : .13;
+        var spring = (distance - restDistance) * springStrength * alpha;
         node.vx += dx / distance * spring;
         node.vy += dy / distance * spring;
 
-        if (!state.grandparent) continue;
-        var branchX = state.parent.x - state.grandparent.x;
-        var branchY = state.parent.y - state.grandparent.y;
-        var branchLength = Math.sqrt(branchX * branchX + branchY * branchY);
-        if (branchLength < .001) continue;
-        var targetX = state.parent.x + branchX / branchLength * restDistance;
-        var targetY = state.parent.y + branchY / branchLength * restDistance;
-        // Gource applies this continuation at one tenth of its parent pull.
-        node.vx += (targetX - node.x) * .012 * alpha;
-        node.vy += (targetY - node.y) * .012 * alpha;
-      }
+        if (!parent) return;
+        var grandparent = topology.parentById[parent.id];
+        var grandX = grandparent ? grandparent.x : 0;
+        var grandY = grandparent ? grandparent.y : 0;
+        var branchX = parent.x - grandX;
+        var branchY = parent.y - grandY;
+        var branchLength = Math.hypot(branchX, branchY);
+        if (branchLength < .001) return;
+        var targetX = parent.x + branchX / branchLength * restDistance;
+        var targetY = parent.y + branchY / branchLength * restDistance;
+        var continuation = topology.relationById[node.id] === 'reply' ? .038 : .022;
+        node.vx += (targetX - node.x) * continuation * alpha;
+        node.vy += (targetY - node.y) * continuation * alpha;
+      });
 
-      // Gource resolves overlap for all hierarchy nodes. A spatial hash, cached
-      // radii and squared-distance rejection avoid an O(nodes^2) browser loop.
-      var cells = Object.create(null);
-      for (index = 0; index < nodeStates.length; index += 1) {
-        var cellState = nodeStates[index];
-        var cellNode = cellState.node;
-        var cellX = Math.floor(cellNode.x / cellSize);
-        var cellY = Math.floor(cellNode.y / cellSize);
+      // Pack every node against every nearby node, regardless of board family.
+      // A spatial hash keeps this bounded for the thousand-node view.
+      var cellSize = 96;
+      var cells = {};
+      nodes.forEach(function (node) {
+        var cellX = Math.floor(node.x / cellSize);
+        var cellY = Math.floor(node.y / cellSize);
         var key = cellX + ':' + cellY;
-        (cells[key] || (cells[key] = [])).push(cellState);
-      }
-      for (index = 0; index < nodeStates.length; index += 1) {
-        var nodeState = nodeStates[index];
-        var packedNode = nodeState.node;
-        var packedCellX = Math.floor(packedNode.x / cellSize);
-        var packedCellY = Math.floor(packedNode.y / cellSize);
+        (cells[key] || (cells[key] = [])).push(node);
+      });
+      nodes.forEach(function (node) {
+        var cellX = Math.floor(node.x / cellSize);
+        var cellY = Math.floor(node.y / cellSize);
         for (var offsetX = -1; offsetX <= 1; offsetX += 1) {
           for (var offsetY = -1; offsetY <= 1; offsetY += 1) {
-            var nearby = cells[(packedCellX + offsetX) + ':' + (packedCellY + offsetY)] || [];
-            for (var nearbyIndex = 0; nearbyIndex < nearby.length; nearbyIndex += 1) {
-              var otherState = nearby[nearbyIndex];
-              var other = otherState.node;
-              if (other.index <= packedNode.index) continue;
-              var pairX = other.x - packedNode.x;
-              var pairY = other.y - packedNode.y;
-              var minimumDistance = nodeState.radius + otherState.radius + 5;
-              var pairDistanceSquared = pairX * pairX + pairY * pairY;
-              if (pairDistanceSquared >= minimumDistance * minimumDistance) continue;
-              if (pairDistanceSquared < .000001) {
-                pairX = ((packedNode.index + other.index * 7) % 9 - 4) * .01 || .01;
-                pairY = ((packedNode.index * 5 + other.index) % 11 - 5) * .01 || .01;
-                pairDistanceSquared = pairX * pairX + pairY * pairY;
+            var nearby = cells[(cellX + offsetX) + ':' + (cellY + offsetY)] || [];
+            nearby.forEach(function (other) {
+              if (other.index <= node.index) return;
+              var dx = other.x - node.x;
+              var dy = other.y - node.y;
+              var distance = Math.hypot(dx, dy);
+              if (distance < .001) {
+                dx = ((node.index + other.index * 7) % 9 - 4) * .01 || .01;
+                dy = ((node.index * 5 + other.index) % 11 - 5) * .01 || .01;
+                distance = Math.hypot(dx, dy);
               }
-              var pairDistance = Math.sqrt(pairDistanceSquared);
-              var overlap = (minimumDistance - pairDistance) * .62 * alpha;
-              var totalInertia = nodeState.inertia + otherState.inertia;
-              var nodeShare = otherState.inertia / totalInertia;
-              var otherShare = nodeState.inertia / totalInertia;
-              packedNode.vx -= pairX / pairDistance * overlap * nodeShare;
-              packedNode.vy -= pairY / pairDistance * overlap * nodeShare;
-              other.vx += pairX / pairDistance * overlap * otherShare;
-              other.vy += pairY / pairDistance * overlap * otherShare;
-            }
+              var minimumDistance = collisionRadius(node) + collisionRadius(other) + 5;
+              if (distance >= minimumDistance) return;
+              var overlap = (minimumDistance - distance) * .62 * alpha;
+              var totalInertia = inertia(node) + inertia(other);
+              var nodeShare = inertia(other) / totalInertia;
+              var otherShare = inertia(node) / totalInertia;
+              node.vx -= dx / distance * overlap * nodeShare;
+              node.vy -= dy / distance * overlap * nodeShare;
+              other.vx += dx / distance * overlap * otherShare;
+              other.vy += dy / distance * overlap * otherShare;
+            });
           }
         }
-      }
+      });
+
+      // Cross references bend the branches gently without becoming structure.
+      topology.references.forEach(function (link) {
+        var source = topology.nodesById[nodeId(link.source)];
+        var target = topology.nodesById[nodeId(link.target)];
+        if (!source || !target) return;
+        var dx = target.x - source.x;
+        var dy = target.y - source.y;
+        var distance = Math.hypot(dx, dy);
+        if (distance <= 125 || distance < .001) return;
+        var pull = (distance - 125) * .0025 * alpha;
+        source.vx += dx / distance * pull;
+        source.vy += dy / distance * pull;
+        target.vx -= dx / distance * pull;
+        target.vy -= dy / distance * pull;
+      });
     }
 
     force.initialize = function (nextNodes) {
       nodes = nextNodes || [];
       nodes.forEach(function (node, index) { node.index = index; });
       topology = structuralTopology(nodes, links);
-      nodeStates = nodes.map(function (node) {
-        var parent = topology.parentById[node.id];
-        return {
-          node: node,
-          parent: parent,
-          grandparent: parent && topology.parentById[parent.id],
-          radius: collisionRadius(node),
-          parentRadius: parent ? collisionRadius(parent) : 0,
-          inertia: inertia(node)
-        };
-      });
-      cellSize = nodeStates.reduce(function (size, state) {
-        return Math.max(size, state.radius * 2 + 5);
-      }, 16);
     };
     return force;
   }
@@ -326,67 +322,18 @@ export const graphScript = `
     graphContainer = null;
   }
 
-  function shuffled(values) {
-    var result = values.slice();
-    for (var index = result.length - 1; index > 0; index -= 1) {
-      var swapIndex = Math.floor(Math.random() * (index + 1));
-      var value = result[index];
-      result[index] = result[swapIndex];
-      result[swapIndex] = value;
-    }
-    return result;
-  }
-
   function randomiseHierarchy(data) {
     var topology = structuralTopology(data.nodes, data.links);
     var rootRadius = virtualRootRadius(data.nodes);
     var placed = {};
-    var childrenByParent = {};
-    var siblingIndexById = {};
-    var familyArea = {};
-    var boards = shuffled(data.nodes.filter(function (node) { return node.kind === 'board'; }));
 
-    data.nodes.forEach(function (node) {
-      var radius = collisionRadius(node) + 3;
-      familyArea[node.board] = (familyArea[node.board] || 0) + radius * radius;
-      var parent = topology.parentById[node.id];
-      if (!parent) return;
-      var siblings = childrenByParent[parent.id] || (childrenByParent[parent.id] = []);
-      siblingIndexById[node.id] = siblings.length;
-      siblings.push(node);
-    });
-
-    var boardLayouts = boards.map(function (node) {
-      return {
-        node: node,
-        radius: Math.max(
-          collisionRadius(node) + 30,
-          Math.sqrt(familyArea[node.board] || 0) * 1.35 + 32
-        )
-      };
-    });
-    var circumference = boardLayouts.reduce(function (sum, layout) {
-      return sum + layout.radius * 2 + 72;
-    }, 0);
-    var largestFamily = boardLayouts.reduce(function (largest, layout) {
-      return Math.max(largest, layout.radius);
-    }, 0);
-    var boardRingRadius = boards.length <= 1
-      ? 0
-      : Math.max(rootRadius + largestFamily, circumference / (Math.PI * 2));
-    var boardCursor = Math.random() * Math.PI * 2;
-
-    boardLayouts.forEach(function (layout) {
-      var arc = circumference > 0
-        ? (layout.radius * 2 + 72) / circumference * Math.PI * 2
-        : Math.PI * 2;
-      var angle = boardCursor + arc / 2 + (Math.random() - .5) * arc * .12;
-      var distance = boardRingRadius * (.96 + Math.random() * .08);
-      var node = layout.node;
+    data.nodes.filter(function (node) { return node.kind === 'board'; }).forEach(function (node) {
+      var angle = Math.random() * Math.PI * 2;
+      var distance = rootRadius + collisionRadius(node) + 12;
+      distance *= .82 + Math.random() * .36;
       node.x = Math.cos(angle) * distance;
       node.y = Math.sin(angle) * distance;
       placed[node.id] = true;
-      boardCursor += arc;
     });
 
     for (var pass = 0; pass < data.nodes.length; pass += 1) {
@@ -401,27 +348,10 @@ export const graphScript = `
           angle = Math.atan2(parent.y - grandparent.y, parent.x - grandparent.x);
           angle += (Math.random() - .5) * (node.kind === 'reply' ? .9 : 1.3);
         } else {
-          var siblings = childrenByParent[parent.id] || [node];
-          var siblingIndex = siblingIndexById[node.id] || 0;
-          var familyDirection = boards.length > 1
-            ? Math.atan2(parent.y, parent.x)
-            : Math.random() * Math.PI * 2;
-          var familySpan = boards.length > 1
-            ? Math.min(Math.PI * .9, Math.PI * 2 / boards.length * .72)
-            : Math.PI * 2;
-          var slot = (siblingIndex + .5) / siblings.length - .5;
-          angle = familyDirection + slot * familySpan;
-          angle += (Math.random() - .5) * familySpan / siblings.length * .55;
+          angle = Math.atan2(parent.y, parent.x) + (Math.random() - .5) * 1.7;
         }
         var gap = topology.relationById[node.id] === 'contains' ? 18 : 10;
         var distance = collisionRadius(parent) + collisionRadius(node) + gap;
-        if (!grandparent) {
-          var threadSpan = boards.length > 1
-            ? Math.min(Math.PI * .9, Math.PI * 2 / boards.length * .72)
-            : Math.PI * 2;
-          var siblingCount = (childrenByParent[parent.id] || []).length;
-          distance = Math.max(distance, siblingCount * (collisionRadius(node) * 2 + 5) / threadSpan);
-        }
         distance *= .78 + Math.random() * .35;
         node.x = parent.x + Math.cos(angle) * distance;
         node.y = parent.y + Math.sin(angle) * distance;
@@ -445,6 +375,17 @@ export const graphScript = `
     });
   }
 
+  function setPhysicsEnabled(instance, nodes, enabled) {
+    if (!enabled) {
+      nodes.forEach(function (node) {
+        node.vx = 0;
+        node.vy = 0;
+      });
+    }
+    instance.cooldownTicks(enabled ? Infinity : 0);
+    instance.d3ReheatSimulation();
+  }
+
   function render(container, payload, ForceGraph) {
     if (!document.documentElement.contains(container)) return;
     destroyGraph();
@@ -452,10 +393,12 @@ export const graphScript = `
     var shell = container.closest('.board-graph-shell');
     var status = shell.querySelector('[data-graph-status]');
     var colorBySelect = shell.querySelector('[data-graph-color-by]');
+    var physics = shell.querySelector('[data-graph-physics]');
     var center = shell.querySelector('[data-graph-center]');
     var reset = shell.querySelector('[data-graph-reset]');
     var palette = colours();
     var colorBy = colorBySelect.value;
+    var physicsEnabled = true;
     var data = graphData(payload);
     randomiseHierarchy(data);
 
@@ -579,11 +522,9 @@ export const graphScript = `
       .linkCanvasObject(drawLink)
       .onNodeClick(function (node) { location.assign(node.url); })
       .onNodeDragEnd(function () { graph.d3ReheatSimulation(); })
-      .autoPauseRedraw(true)
       .cooldownTicks(Infinity)
       .cooldownTime(Infinity)
-      .d3AlphaMin(0)
-      .d3AlphaDecay(0)
+      .d3AlphaDecay(.008)
       .d3VelocityDecay(.78);
 
     graph.d3Force('charge', null);
@@ -594,6 +535,13 @@ export const graphScript = `
     centerGraph();
     status.textContent = '';
 
+    physics.addEventListener('click', function () {
+      physicsEnabled = !physicsEnabled;
+      setPhysicsEnabled(graph, data.nodes, physicsEnabled);
+      physics.textContent = physicsEnabled ? '⏸' : '▶';
+      physics.setAttribute('aria-label', physicsEnabled ? 'Pause physics' : 'Play physics');
+      physics.setAttribute('title', physicsEnabled ? 'Pause physics' : 'Play physics');
+    });
     center.addEventListener('click', centerGraph);
     colorBySelect.addEventListener('change', function () {
       colorBy = ['board', 'author', 'owner'].indexOf(colorBySelect.value) >= 0

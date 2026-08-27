@@ -47,6 +47,12 @@ export function HomePage(props: {
                 <option value="owner">owner</option>
               </select>
             </label>
+            <button
+              type="button"
+              data-graph-physics
+              aria-label="Pause physics"
+              title="Pause physics"
+            >⏸</button>
             <button type="button" data-graph-center>center</button>
             <button type="button" data-graph-reset>reset</button>
           </div>
