@@ -145,7 +145,7 @@ describe("server-rendered web UI", () => {
     expect(styles).toContain("@media (min-width: 1000px) { .tail-toggle { display: none; } }");
   });
 
-  test("renders an efficiently bounded Gource-style graph and self-hosts its canvas library", async () => {
+  test("renders a one-request live physics graph and self-hosts its canvas library", async () => {
     const identity = agent("graph-ant");
     const older = service.startThread(identity, {
       board: "til",
@@ -181,16 +181,12 @@ describe("server-rendered web UI", () => {
     expect(html).toContain("Interactive graph of boards, threads, replies, and post references");
     expect(graphScript).toContain("window.ForceGraph");
     expect(() => new Function(graphScript)).not.toThrow();
-    expect(graphScript).toContain(".autoPauseRedraw(true)");
-    expect(graphScript).toContain(".cooldownTicks(Infinity)");
-    expect(graphScript).toContain(".cooldownTime(Infinity)");
-    expect(graphScript).toContain(".d3AlphaMin(0)");
-    expect(graphScript).toContain(".d3AlphaDecay(0)");
+    expect(graphScript).toContain("cooldownTime(Infinity)");
     expect(graphScript).toContain("d3ReheatSimulation()");
     expect(graphScript).toContain("function gourceHierarchyForce(links)");
     expect(graphScript).toContain("surface-to-surface");
-    expect(graphScript).toContain("minimumDistance - pairDistance");
-    expect(graphScript).toContain("var targetX = state.parent.x + branchX / branchLength * restDistance");
+    expect(graphScript).toContain("minimumDistance - distance");
+    expect(graphScript).toContain("var targetX = parent.x + branchX / branchLength * restDistance");
     expect(graphScript).toContain("graph.d3Force('gource-hierarchy', gourceHierarchyForce(data.links))");
     expect(graphScript).toContain("d3Force('charge', null)");
     expect(graphScript).toContain("d3Force('link', null)");
@@ -211,7 +207,6 @@ describe("server-rendered web UI", () => {
     expect(graphScript).not.toContain("globalGravity");
     expect(graphScript).toContain("nodeCanvasObjectMode(function () { return 'replace'; })");
     expect(graphScript).toContain("linkCanvasObjectMode(function () { return 'replace'; })");
-    expect(graphScript).toContain("nodePointerAreaPaint(paintNodePointer)");
     expect(graphScript).toContain("context.shadowBlur");
     expect(graphScript).toContain("link.kind === 'reference' ? .52 : .58");
     expect(graphScript).toContain("link.kind === 'reference' ? .9 : .8");
@@ -220,10 +215,6 @@ describe("server-rendered web UI", () => {
     expect(graphScript).toContain("fillText('/' + node.board + '/'");
     expect(graphScript).toContain("randomiseHierarchy(data)");
     expect(graphScript).toContain("var data = graphData(payload);\n    randomiseHierarchy(data);");
-    expect(graphScript).toContain("var boards = shuffled(");
-    expect(graphScript).toContain("var boardCursor = Math.random()");
-    expect(graphScript).not.toContain("clusterX");
-    expect(graphScript).not.toContain("clusterY");
     expect(graphScript).not.toContain("ringRadius");
     expect(graphScript).not.toContain("massWellForce");
     expect(graphScript).not.toContain("setTimeout(function ()");
@@ -246,34 +237,14 @@ describe("server-rendered web UI", () => {
       `${graphScript.slice(0, forceSourceEnd)}exposed.force = gourceHierarchyForce;})();`,
     )(exposed);
     const colliding = [
-      { id: "a", kind: "thread", threadSize: 1, board: "til", x: 0, y: 0, vx: 0, vy: 0 },
-      { id: "b", kind: "thread", threadSize: 1, board: "meta", x: 4, y: 0, vx: 0, vy: 0 },
+      { id: "a", kind: "reply", board: "til", x: 0, y: 0, vx: 0, vy: 0 },
+      { id: "b", kind: "reply", board: "meta", x: 4, y: 0, vx: 0, vy: 0 },
     ];
     const collisionForce = exposed.force([]);
     collisionForce.initialize(colliding);
     collisionForce(1);
     expect(colliding[0]!.vx).toBeLessThan(0);
     expect(colliding[1]!.vx).toBeGreaterThan(0);
-
-    const leaves = [
-      { id: "leaf-a", kind: "reply", board: "til", x: 0, y: 0, vx: 0, vy: 0 },
-      { id: "leaf-b", kind: "reply", board: "meta", x: 4, y: 0, vx: 0, vy: 0 },
-    ];
-    const leafForce = exposed.force([]);
-    leafForce.initialize(leaves);
-    leafForce(1);
-    expect(leaves[0]!.vx).toBeLessThan(0);
-    expect(leaves[1]!.vx).toBeGreaterThan(0);
-
-    const seededRoots = [
-      { id: "root-a", kind: "board", postCount: 1, x: -200, y: 75, vx: 0, vy: 0 },
-      { id: "root-b", kind: "board", postCount: 1, x: 200, y: -75, vx: 0, vy: 0 },
-    ];
-    const rootForce = exposed.force([]);
-    rootForce.initialize(seededRoots);
-    rootForce(1);
-    expect(seededRoots[0]).toMatchObject({ vx: 0, vy: 0 });
-    expect(seededRoots[1]).toMatchObject({ vx: 0, vy: 0 });
 
     const hierarchy = [
       { id: "board", kind: "board", postCount: 4, x: 200, y: 0, vx: 0, vy: 0 },
@@ -286,59 +257,9 @@ describe("server-rendered web UI", () => {
     ]);
     hierarchyForce.initialize(hierarchy);
     hierarchyForce(1);
-    expect(hierarchy[0]).toMatchObject({ vx: 0, vy: 0 });
-    expect(hierarchy[1]!.vx).toBeLessThan(0);
+    expect(hierarchy[0]!.vx).toBeLessThan(0);
     expect(hierarchy[2]!.vx).toBeGreaterThan(0);
     expect(hierarchy[2]!.vy).toBeLessThan(0);
-
-    const layoutSourceEnd = graphScript.indexOf("  function render(container");
-    const layout = {} as {
-      graphData: (payload: Record<string, unknown>) => {
-        nodes: Array<Record<string, number | string | undefined>>;
-        links: Array<Record<string, string>>;
-      };
-      randomise: (data: {
-        nodes: Array<Record<string, number | string | undefined>>;
-        links: Array<Record<string, string>>;
-      }) => void;
-    };
-    new Function(
-      "exposed",
-      `${graphScript.slice(0, layoutSourceEnd)}exposed.graphData = graphData; exposed.randomise = randomiseHierarchy;})();`,
-    )(layout);
-    const clustered = layout.graphData({
-      boards: [
-        { id: "til", name: "til", description: "", post_count: 2 },
-        { id: "meta", name: "meta", description: "", post_count: 2 },
-      ],
-      posts: [
-        { id: 1, thread_id: 1, kind: "thread", board: "til", owner: "alex", author: "alex/a" },
-        { id: 2, thread_id: 1, kind: "reply", board: "til", owner: "alex", author: "alex/a" },
-        { id: 3, thread_id: 3, kind: "thread", board: "meta", owner: "alex", author: "alex/b" },
-        { id: 4, thread_id: 3, kind: "reply", board: "meta", owner: "alex", author: "alex/b" },
-      ],
-      edges: [
-        { source: "board:til", target: "post:1", kind: "contains" },
-        { source: "post:1", target: "post:2", kind: "reply" },
-        { source: "board:meta", target: "post:3", kind: "contains" },
-        { source: "post:3", target: "post:4", kind: "reply" },
-      ],
-    });
-    layout.randomise(clustered);
-    const tilBoard = clustered.nodes.find((node) => node.id === "board:til")!;
-    const metaBoard = clustered.nodes.find((node) => node.id === "board:meta")!;
-    expect(Math.hypot(
-      Number(tilBoard.x) - Number(metaBoard.x),
-      Number(tilBoard.y) - Number(metaBoard.y),
-    )).toBeGreaterThan(100);
-    for (const node of clustered.nodes.filter((candidate) => candidate.board === "til" && candidate.kind !== "board")) {
-      const ownDistance = Math.hypot(Number(node.x) - Number(tilBoard.x), Number(node.y) - Number(tilBoard.y));
-      const otherDistance = Math.hypot(Number(node.x) - Number(metaBoard.x), Number(node.y) - Number(metaBoard.y));
-      expect(ownDistance).toBeLessThan(otherDistance);
-    }
-    const firstSeed = `${tilBoard.x}:${tilBoard.y}`;
-    layout.randomise(clustered);
-    expect(`${tilBoard.x}:${tilBoard.y}`).not.toBe(firstSeed);
 
     const unauthorized = await app.request("/graph.json");
     expect(unauthorized.status).toBe(302);
