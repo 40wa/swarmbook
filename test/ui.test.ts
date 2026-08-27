@@ -145,7 +145,7 @@ describe("server-rendered web UI", () => {
     expect(styles).toContain("@media (min-width: 1000px) { .tail-toggle { display: none; } }");
   });
 
-  test("renders an efficiently bounded, board-clustered graph and self-hosts its canvas library", async () => {
+  test("renders an efficiently bounded Gource-style graph and self-hosts its canvas library", async () => {
     const identity = agent("graph-ant");
     const older = service.startThread(identity, {
       board: "til",
@@ -182,11 +182,10 @@ describe("server-rendered web UI", () => {
     expect(graphScript).toContain("window.ForceGraph");
     expect(() => new Function(graphScript)).not.toThrow();
     expect(graphScript).toContain(".autoPauseRedraw(true)");
-    expect(graphScript).toContain(".cooldownTicks(140)");
-    expect(graphScript).toContain(".cooldownTime(3500)");
-    expect(graphScript).toContain(".d3AlphaMin(.015)");
-    expect(graphScript).not.toContain("cooldownTime(Infinity)");
-    expect(graphScript).not.toContain("cooldownTicks(Infinity)");
+    expect(graphScript).toContain(".cooldownTicks(Infinity)");
+    expect(graphScript).toContain(".cooldownTime(Infinity)");
+    expect(graphScript).toContain(".d3AlphaMin(0)");
+    expect(graphScript).toContain(".d3AlphaDecay(0)");
     expect(graphScript).toContain("d3ReheatSimulation()");
     expect(graphScript).toContain("function gourceHierarchyForce(links)");
     expect(graphScript).toContain("surface-to-surface");
@@ -210,10 +209,9 @@ describe("server-rendered web UI", () => {
     expect(graphScript).toContain("graph.d3ReheatSimulation();\n      centerGraph();");
     expect(graphScript).not.toContain("onEngineTick");
     expect(graphScript).not.toContain("globalGravity");
-    expect(graphScript).toContain("node.kind === 'board' ? 'after' : undefined");
-    expect(graphScript).not.toContain("linkCanvasObjectMode");
-    expect(graphScript).toContain(".linkWidth(function (link)");
-    expect(graphScript).toContain(".linkLineDash(function (link)");
+    expect(graphScript).toContain("nodeCanvasObjectMode(function () { return 'replace'; })");
+    expect(graphScript).toContain("linkCanvasObjectMode(function () { return 'replace'; })");
+    expect(graphScript).toContain("nodePointerAreaPaint(paintNodePointer)");
     expect(graphScript).toContain("context.shadowBlur");
     expect(graphScript).toContain("link.kind === 'reference' ? .52 : .58");
     expect(graphScript).toContain("link.kind === 'reference' ? .9 : .8");
@@ -224,7 +222,8 @@ describe("server-rendered web UI", () => {
     expect(graphScript).toContain("var data = graphData(payload);\n    randomiseHierarchy(data);");
     expect(graphScript).toContain("var boards = shuffled(");
     expect(graphScript).toContain("var boardCursor = Math.random()");
-    expect(graphScript).toContain("node.clusterX = node.x");
+    expect(graphScript).not.toContain("clusterX");
+    expect(graphScript).not.toContain("clusterY");
     expect(graphScript).not.toContain("ringRadius");
     expect(graphScript).not.toContain("massWellForce");
     expect(graphScript).not.toContain("setTimeout(function ()");
@@ -263,8 +262,18 @@ describe("server-rendered web UI", () => {
     const leafForce = exposed.force([]);
     leafForce.initialize(leaves);
     leafForce(1);
-    expect(leaves[0]!.vx).toBe(0);
-    expect(leaves[1]!.vx).toBe(0);
+    expect(leaves[0]!.vx).toBeLessThan(0);
+    expect(leaves[1]!.vx).toBeGreaterThan(0);
+
+    const seededRoots = [
+      { id: "root-a", kind: "board", postCount: 1, x: -200, y: 75, vx: 0, vy: 0 },
+      { id: "root-b", kind: "board", postCount: 1, x: 200, y: -75, vx: 0, vy: 0 },
+    ];
+    const rootForce = exposed.force([]);
+    rootForce.initialize(seededRoots);
+    rootForce(1);
+    expect(seededRoots[0]).toMatchObject({ vx: 0, vy: 0 });
+    expect(seededRoots[1]).toMatchObject({ vx: 0, vy: 0 });
 
     const hierarchy = [
       { id: "board", kind: "board", postCount: 4, x: 200, y: 0, vx: 0, vy: 0 },
@@ -277,7 +286,8 @@ describe("server-rendered web UI", () => {
     ]);
     hierarchyForce.initialize(hierarchy);
     hierarchyForce(1);
-    expect(hierarchy[0]!.vx).toBeLessThan(0);
+    expect(hierarchy[0]).toMatchObject({ vx: 0, vy: 0 });
+    expect(hierarchy[1]!.vx).toBeLessThan(0);
     expect(hierarchy[2]!.vx).toBeGreaterThan(0);
     expect(hierarchy[2]!.vy).toBeLessThan(0);
 
