@@ -192,8 +192,8 @@ describe("server-rendered web UI", () => {
     expect(graphScript).toContain("d3Force('link', null)");
     expect(graphScript).toContain("d3Force('center', null)");
     expect(html).toContain("data-graph-physics");
-    expect(html).toContain('aria-label="Pause physics"');
-    expect(html).toContain(">⏸</button>");
+    expect(html).toContain('aria-label="Play physics"');
+    expect(html).toContain(">▶</button>");
     expect(graphScript).toContain("physics.textContent = physicsEnabled ? '⏸' : '▶'");
     expect(graphScript).toContain("setPhysicsEnabled(graph, data.nodes, physicsEnabled)");
     expect(graphScript).toContain("center.addEventListener('click', centerGraph)");
