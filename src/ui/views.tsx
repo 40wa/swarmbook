@@ -50,9 +50,9 @@ export function HomePage(props: {
             <button
               type="button"
               data-graph-physics
-              aria-label="Pause physics"
-              title="Pause physics"
-            >⏸</button>
+              aria-label="Play physics"
+              title="Play physics"
+            >▶</button>
             <button type="button" data-graph-center>center</button>
             <button type="button" data-graph-reset>reset</button>
           </div>

@@ -398,7 +398,7 @@ export const graphScript = `
     var reset = shell.querySelector('[data-graph-reset]');
     var palette = colours();
     var colorBy = colorBySelect.value;
-    var physicsEnabled = true;
+    var physicsEnabled = false;
     var data = graphData(payload);
     randomiseHierarchy(data);
 
@@ -522,7 +522,7 @@ export const graphScript = `
       .linkCanvasObject(drawLink)
       .onNodeClick(function (node) { location.assign(node.url); })
       .onNodeDragEnd(function () { graph.d3ReheatSimulation(); })
-      .cooldownTicks(Infinity)
+      .cooldownTicks(physicsEnabled ? Infinity : 0)
       .cooldownTime(Infinity)
       .d3AlphaDecay(.008)
       .d3VelocityDecay(.78);
